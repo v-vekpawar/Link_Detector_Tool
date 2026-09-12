@@ -1,0 +1,53 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Virtual environments ---
+venv/
+.venv/
+env/
+ENV/
+
+# --- SQLite database (real runtime data, not something to commit) ---
+backend/link_audit.db
+backend/*.db
+backend/tests/
+backend/tests/_test_api_scratch.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# --- Offline bundling (Step 12): wheels + Chromium cache are large binaries,
+# transferred to the VM separately, not committed to git ---
+deps/wheels/
+deps/ms-playwright/
+deps/*.tar.gz
+deps/*.zip
+
+# --- Playwright ---
+# local (non-bundled) browser cache if you run Playwright directly while developing
+.cache/ms-playwright/
+
+# --- Frontend (only relevant if you introduce a build step later; the
+# current frontend is plain HTML/CSS/JS with no build/bundler) ---
+node_modules/
+frontend/dist/
+
+# --- Env / secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Logs ---
+*.log

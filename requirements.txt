@@ -1,0 +1,35 @@
+# Link & Navigation Audit Tool — pinned dependencies
+# Download these as wheels on an internet-connected machine for offline transfer:
+#   pip download -r requirements.txt -d deps/wheels
+# Install on the air-gapped VM with:
+#   pip install --no-index --find-links=deps/wheels -r requirements.txt
+
+# --- Backend framework ---
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.9.2
+python-multipart==0.0.9
+
+# --- Tier 1: static crawl / parse ---
+requests==2.32.3
+beautifulsoup4==4.12.3
+lxml==5.3.0
+
+# Pinned explicitly (transitive deps of requests) to avoid version-mismatch
+# warnings and keep the offline bundle reproducible.
+urllib3==2.2.3
+charset-normalizer==3.3.2
+idna==3.7
+certifi==2024.8.30
+
+# --- Tier 2: dynamic rendering / login ---
+playwright==1.47.0
+
+# --- Export ---
+openpyxl==3.1.5
+reportlab==4.2.5
+
+# Dev/test-only dependencies — NOT needed on the offline VM, only for
+# running the test suite locally (pytest/TestClient use these).
+# Install with: pip install -r requirements-dev.txt
+httpx==0.27.2
