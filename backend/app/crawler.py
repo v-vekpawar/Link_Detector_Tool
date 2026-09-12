@@ -42,6 +42,7 @@ def crawl_site(
     max_pages: int = MAX_PAGES_PER_SCAN,
     session: Optional[requests.Session] = None,
     progress_callback=None,
+    page_html_fetcher=None,
 ) -> Dict:
     """
     Runs a breadth-first crawl starting at `start_url`, following only
@@ -57,6 +58,15 @@ def crawl_site(
     `progress_callback`, if given, is called after each page finishes
     processing as progress_callback(pages_crawled=int, links_checked=int) —
     used later to drive the SSE progress line (Step 8).
+
+    `page_html_fetcher`, if given, is a callable(url) -> (html, success)
+    used instead of a plain `requests` GET to fetch each page's HTML for
+    *parsing/extraction* — this is the Tier 2 (Playwright) hand-off for
+    Dynamic site scans, so JS-injected links are present before extraction
+    runs. Per-link broken-status checks still always go through Tier 1
+    (`requests`, via classify_link) regardless of site type — only the
+    initial page fetch-for-parsing is swapped out. Defaults to None
+    (plain `requests`, i.e. Static site behavior, unchanged from Step 4).
     """
     sess = session or requests.Session()
 
@@ -75,23 +85,31 @@ def crawl_site(
             continue
         visited_pages.add(normalized_page)
 
-        try:
-            resp = sess.get(page_url, timeout=10)
-        except requests.exceptions.RequestException:
-            # Page itself unreachable — nothing to extract, can't recurse further.
-            # (If it was reached via a link, that link's own broken-check already
-            # produced a finding on its parent page.)
+        if page_html_fetcher is not None:
+            html, success = page_html_fetcher(page_url)
             pages_crawled += 1
-            continue
+            if not success or html is None:
+                # Render failed outright — nothing to extract, can't recurse further.
+                continue
+        else:
+            try:
+                resp = sess.get(page_url, timeout=10)
+            except requests.exceptions.RequestException:
+                # Page itself unreachable — nothing to extract, can't recurse further.
+                # (If it was reached via a link, that link's own broken-check already
+                # produced a finding on its parent page.)
+                pages_crawled += 1
+                continue
 
-        pages_crawled += 1
+            pages_crawled += 1
 
-        content_type = resp.headers.get("Content-Type", "")
-        looks_like_html = "html" in content_type or resp.text.strip().lower().startswith(("<!doctype", "<html"))
-        if not looks_like_html:
-            continue
+            content_type = resp.headers.get("Content-Type", "")
+            looks_like_html = "html" in content_type or resp.text.strip().lower().startswith(("<!doctype", "<html"))
+            if not looks_like_html:
+                continue
+            html = resp.text
 
-        elements = extract_link_elements(resp.text, page_url)
+        elements = extract_link_elements(html, page_url)
         for element in elements:
             total_links_checked += 1
             finding = classify_link(element, reference_ip, session=sess)
