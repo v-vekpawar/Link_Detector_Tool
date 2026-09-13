@@ -56,8 +56,10 @@ def crawl_site(
         }
 
     `progress_callback`, if given, is called after each page finishes
-    processing as progress_callback(pages_crawled=int, links_checked=int) —
-    used later to drive the SSE progress line (Step 8).
+    processing as progress_callback(pages_crawled=int, links_checked=int,
+    frontier_size=int) — frontier_size is the number of pages still queued
+    but not yet crawled at that moment, used by Step 8's rolling time
+    estimate (avg_time_per_page * frontier_size, per ARCHITECTURE.md).
 
     `page_html_fetcher`, if given, is a callable(url) -> (html, success)
     used instead of a plain `requests` GET to fetch each page's HTML for
@@ -135,7 +137,11 @@ def crawl_site(
             queue.append(element.absolute_url)
 
         if progress_callback:
-            progress_callback(pages_crawled=pages_crawled, links_checked=total_links_checked)
+            progress_callback(
+                pages_crawled=pages_crawled,
+                links_checked=total_links_checked,
+                frontier_size=len(queue),
+            )
 
     return {
         "pages_crawled": pages_crawled,

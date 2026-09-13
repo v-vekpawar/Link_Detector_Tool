@@ -1,10 +1,14 @@
 """
-FastAPI backend (Steps 5–7 of BUILD_ORDER.md).
+FastAPI backend (Steps 5–8 of BUILD_ORDER.md).
 
-Wires /api/scan/start, /api/scan/{id}/results, /api/scan/last to the Tier 1
-engine SYNCHRONOUSLY — the HTTP request blocks until the whole crawl
-finishes. This is deliberately simple, just to confirm the plumbing works
-end-to-end. Async orchestration + SSE progress streaming come in Step 8.
+/api/scan/start does cheap, synchronous validation only (site_type value,
+login mode/site_type compatibility, required login fields present, and —
+for "recorded" mode — that a saved login_config actually exists for this
+target). It creates the scan's DB row and returns scan_id immediately.
+Everything that touches the network (starting the Tier 2 browser, logging
+in, and the crawl itself) runs in a background thread — see
+_run_scan_worker() below. Live progress from that thread is tracked in
+app.scan_sessions and streamed via GET /api/scan/{id}/progress (SSE).
 
 Both site_type values are wired up: "static" runs Tier 1 only; "dynamic"
 spins up a Tier 2 DynamicSession (Playwright) for login + JS rendering,
@@ -20,13 +24,17 @@ Run from backend/ with the venv active:
     uvicorn app.main:app --reload
 """
 
+import json
+import threading
 import time
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import requests
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from app import scan_sessions
 from app.config import extract_reference_ip
 from app.crawler import crawl_site
 from app.db import get_connection, init_db
@@ -35,6 +43,12 @@ from app.login_record_sessions import get_session, pop_session, start_recording_
 from app.renderer import DynamicSession
 
 app = FastAPI(title="Link & Navigation Audit Tool")
+
+# Poll interval for the SSE progress stream. crawl_site's progress_callback
+# fires once per page, which can be much faster or slower than this — the
+# stream just samples whatever scan_sessions has at each tick, it doesn't
+# need to fire in lockstep with page completions.
+SSE_POLL_INTERVAL_SECONDS = 1.0
 
 
 @app.on_event("startup")
@@ -139,116 +153,134 @@ def _build_results_payload(scan_id: int):
 
 
 # ---------------------------------------------------------------------------
-# Endpoints
+# Background scan execution (Step 8)
 # ---------------------------------------------------------------------------
 
-@app.post("/api/scan/start", response_model=ScanStartResponse)
-def start_scan(payload: ScanStartRequest):
-    if payload.site_type not in ("static", "dynamic"):
-        raise HTTPException(status_code=400, detail="site_type must be 'static' or 'dynamic'.")
+def _resolve_login_plan(payload: ScanStartRequest, reference_ip: str) -> Optional[Dict[str, Any]]:
+    """
+    Synchronous, network-free validation of the requested login mode.
+    Raises HTTPException(400) for anything wrong with the request shape or
+    an unresolvable "recorded" reference — this is exactly the validation
+    that used to happen inline before the network calls, just pulled out
+    so it can run before the background thread starts.
 
-    if payload.login is not None and payload.login.mode == "recorded" and payload.site_type != "dynamic":
-        raise HTTPException(
-            status_code=400,
-            detail="login mode 'recorded' requires site_type='dynamic' (replay uses the Tier 2 browser engine).",
-        )
+    Returns a plan dict the background worker can act on without touching
+    the DB or request payload again, or None if no login is configured.
+    """
+    if payload.login is None:
+        return None
 
-    reference_ip = extract_reference_ip(payload.target_url)
-    if not reference_ip:
-        raise HTTPException(status_code=400, detail="Could not determine a reference IP from target_url.")
+    if payload.login.mode == "auto":
+        if not (payload.login.login_url and payload.login.username and payload.login.password):
+            raise HTTPException(
+                status_code=400,
+                detail="login mode 'auto' requires login_url, username, and password.",
+            )
+        return {
+            "mode": "auto",
+            "login_url": payload.login.login_url,
+            "username": payload.login.username,
+            "password": payload.login.password,
+        }
 
+    if payload.login.mode == "recorded":
+        if not (payload.login.username and payload.login.password):
+            raise HTTPException(
+                status_code=400,
+                detail="login mode 'recorded' requires username and password — credentials are "
+                       "never stored, only the click/fill mechanism, so they must be supplied fresh "
+                       "each scan.",
+            )
+        saved_config = get_login_config(reference_ip)
+        if saved_config is None or saved_config["mode"] != "recorded":
+            raise HTTPException(
+                status_code=400,
+                detail=f"No recorded login flow found for {reference_ip}. Record one first via "
+                       f"/api/login/record/start.",
+            )
+        start_url = payload.login.login_url or saved_config["login_url"]
+        if not start_url:
+            raise HTTPException(
+                status_code=400,
+                detail="No login URL available to replay against — the saved recording doesn't "
+                       "have one and none was provided in this request.",
+            )
+        return {
+            "mode": "recorded",
+            "start_url": start_url,
+            "recorded_steps": saved_config["recorded_steps"],
+            "username": payload.login.username,
+            "password": payload.login.password,
+        }
+
+    raise HTTPException(status_code=400, detail=f"Unknown login mode: {payload.login.mode!r}")
+
+
+def _run_scan_worker(scan_id: int, target_url: str, site_type: str, reference_ip: str,
+                      login_plan: Optional[Dict[str, Any]]) -> None:
+    """
+    Runs entirely in a background thread, started by start_scan() right
+    after it returns scan_id to the caller. Owns everything that touches
+    the network: Tier 2 startup + login (if dynamic), the crawl itself,
+    and writing the final results back to SQLite. Reports live progress
+    via app.scan_sessions so GET /api/scan/{id}/progress can stream it.
+
+    Any exception here — a login failure, a crawl blowing up, whatever —
+    is caught and turned into status='failed' on the scan row plus an
+    error message on the progress entry, rather than being allowed to
+    kill the thread silently.
+    """
     session = requests.Session()
     page_html_fetcher = None
     dyn_session = None
     login_used = "none"
+    conn = get_connection()
 
     try:
-        if payload.site_type == "dynamic":
-            dyn_session = DynamicSession().start()
-            page_html_fetcher = dyn_session.render
-
-            if payload.login is not None:  # mode == "auto" or "recorded"
-                if payload.login.mode == "auto":
-                    if not (payload.login.login_url and payload.login.username and payload.login.password):
-                        raise HTTPException(
-                            status_code=400,
-                            detail="login mode 'auto' requires login_url, username, and password.",
-                        )
-                    logged_in = dyn_session.auto_login(
-                        payload.login.login_url, payload.login.username, payload.login.password
-                    )
-                    if not logged_in:
-                        raise HTTPException(
-                            status_code=400,
-                            detail="Could not find a password field on the login page — auto-login failed.",
-                        )
-                    session.cookies.update(dyn_session.cookies_for_requests())
-                    login_used = "auto"
-
-                elif payload.login.mode == "recorded":
-                    if not (payload.login.username and payload.login.password):
-                        raise HTTPException(
-                            status_code=400,
-                            detail="login mode 'recorded' requires username and password — credentials are "
-                                   "never stored, only the click/fill mechanism, so they must be supplied fresh "
-                                   "each scan.",
-                        )
-                    saved_config = get_login_config(reference_ip)
-                    if saved_config is None or saved_config["mode"] != "recorded":
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"No recorded login flow found for {reference_ip}. Record one first via "
-                                   f"/api/login/record/start.",
-                        )
-                    start_url = payload.login.login_url or saved_config["login_url"]
-                    if not start_url:
-                        raise HTTPException(
-                            status_code=400,
-                            detail="No login URL available to replay against — the saved recording doesn't "
-                                   "have one and none was provided in this request.",
-                        )
-                    html, replay_ok = dyn_session.replay_login(
-                        start_url, saved_config["recorded_steps"], payload.login.username, payload.login.password
-                    )
-                    if not replay_ok:
-                        raise HTTPException(
-                            status_code=400,
-                            detail="Recorded login replay failed — the target's login page may have changed "
-                                   "since recording. Consider re-recording the flow.",
-                        )
-                    session.cookies.update(dyn_session.cookies_for_requests())
-                    login_used = "recorded"
-
-                else:
-                    raise HTTPException(
-                        status_code=400, detail=f"Unknown login mode: {payload.login.mode!r}"
-                    )
-
-        conn = get_connection()
         try:
-            cursor = conn.execute(
-                """INSERT INTO scans (target_url, target_ip, site_type, login_used, status)
-                   VALUES (?, ?, ?, ?, 'running')""",
-                (payload.target_url, reference_ip, payload.site_type, login_used),
-            )
+            if site_type == "dynamic":
+                dyn_session = DynamicSession().start()
+                page_html_fetcher = dyn_session.render
+
+                if login_plan is not None:
+                    if login_plan["mode"] == "auto":
+                        logged_in = dyn_session.auto_login(
+                            login_plan["login_url"], login_plan["username"], login_plan["password"]
+                        )
+                        if not logged_in:
+                            raise RuntimeError(
+                                "Could not find a password field on the login page — auto-login failed."
+                            )
+                        session.cookies.update(dyn_session.cookies_for_requests())
+                        login_used = "auto"
+
+                    elif login_plan["mode"] == "recorded":
+                        html, replay_ok = dyn_session.replay_login(
+                            login_plan["start_url"], login_plan["recorded_steps"],
+                            login_plan["username"], login_plan["password"],
+                        )
+                        if not replay_ok:
+                            raise RuntimeError(
+                                "Recorded login replay failed — the target's login page may have changed "
+                                "since recording. Consider re-recording the flow."
+                            )
+                        session.cookies.update(dyn_session.cookies_for_requests())
+                        login_used = "recorded"
+
+            conn.execute("UPDATE scans SET login_used = ? WHERE id = ?", (login_used, scan_id))
             conn.commit()
-            scan_id = cursor.lastrowid
+
+            def progress_callback(**kwargs):
+                scan_sessions.update_progress(scan_id, **kwargs)
 
             start_time = time.monotonic()
-            try:
-                result = crawl_site(
-                    payload.target_url,
-                    reference_ip,
-                    session=session,
-                    page_html_fetcher=page_html_fetcher,
-                )
-            except Exception as e:
-                conn.execute(
-                    "UPDATE scans SET status = 'failed', completed_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (scan_id,),
-                )
-                conn.commit()
-                raise HTTPException(status_code=502, detail=f"Scan failed: {e}") from e
+            result = crawl_site(
+                target_url,
+                reference_ip,
+                session=session,
+                page_html_fetcher=page_html_fetcher,
+                progress_callback=progress_callback,
+            )
             duration_seconds = int(time.monotonic() - start_time)
 
             for finding in result["findings"]:
@@ -275,13 +307,129 @@ def start_scan(payload: ScanStartRequest):
                 (result["pages_crawled"], result["total_links_checked"], duration_seconds, scan_id),
             )
             conn.commit()
-        finally:
-            conn.close()
+            scan_sessions.finish_progress(scan_id, "completed")
+
+        except Exception as e:
+            conn.execute(
+                "UPDATE scans SET status = 'failed', completed_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (scan_id,),
+            )
+            conn.commit()
+            scan_sessions.finish_progress(scan_id, "failed", error=str(e))
     finally:
+        conn.close()
         if dyn_session is not None:
             dyn_session.close()
 
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/api/scan/start", response_model=ScanStartResponse)
+def start_scan(payload: ScanStartRequest):
+    if payload.site_type not in ("static", "dynamic"):
+        raise HTTPException(status_code=400, detail="site_type must be 'static' or 'dynamic'.")
+
+    if payload.login is not None and payload.login.mode == "recorded" and payload.site_type != "dynamic":
+        raise HTTPException(
+            status_code=400,
+            detail="login mode 'recorded' requires site_type='dynamic' (replay uses the Tier 2 browser engine).",
+        )
+
+    reference_ip = extract_reference_ip(payload.target_url)
+    if not reference_ip:
+        raise HTTPException(status_code=400, detail="Could not determine a reference IP from target_url.")
+
+    # Cheap, network-free validation only — raises HTTPException(400) for
+    # anything wrong with the request itself. Anything that actually talks
+    # to the target happens later, in the background thread.
+    login_plan = _resolve_login_plan(payload, reference_ip)
+
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            """INSERT INTO scans (target_url, target_ip, site_type, login_used, status)
+               VALUES (?, ?, ?, 'none', 'running')""",
+            (payload.target_url, reference_ip, payload.site_type),
+        )
+        conn.commit()
+        scan_id = cursor.lastrowid
+    finally:
+        conn.close()
+
+    scan_sessions.start_progress(scan_id)
+
+    thread = threading.Thread(
+        target=_run_scan_worker,
+        args=(scan_id, payload.target_url, payload.site_type, reference_ip, login_plan),
+        daemon=True,
+    )
+    thread.start()
+
     return ScanStartResponse(scan_id=scan_id)
+
+
+@app.get("/api/scan/{scan_id}/progress")
+def stream_scan_progress(scan_id: int):
+    """
+    SSE stream of live progress, per API_SPEC.md. Samples app.scan_sessions
+    once per SSE_POLL_INTERVAL_SECONDS and pushes a JSON event each time,
+    ending with a final event carrying status "completed" or "failed".
+
+    If scan_id isn't in the in-memory registry (already finished and
+    dropped, or the process restarted), falls back to the scans table so a
+    late-connecting or reconnecting client still gets a sensible final
+    event instead of nothing.
+    """
+
+    def event_stream():
+        while True:
+            snapshot = scan_sessions.get_progress(scan_id)
+
+            if snapshot is None:
+                conn = get_connection()
+                try:
+                    row = conn.execute(
+                        """SELECT status, pages_crawled, total_links_checked, duration_seconds
+                           FROM scans WHERE id = ?""",
+                        (scan_id,),
+                    ).fetchone()
+                finally:
+                    conn.close()
+
+                if row is None:
+                    fallback_payload = {"status": "not_found"}
+                else:
+                    fallback_payload = {
+                        "pages_crawled": row["pages_crawled"] or 0,
+                        "links_checked": row["total_links_checked"] or 0,
+                        "elapsed_seconds": row["duration_seconds"] or 0,
+                        "estimated_remaining_seconds": 0,
+                        "status": row["status"],
+                    }
+                yield f"data: {json.dumps(fallback_payload)}\n\n"
+                return
+
+            payload = {
+                "pages_crawled": snapshot["pages_crawled"],
+                "links_checked": snapshot["links_checked"],
+                "elapsed_seconds": round(snapshot["elapsed_seconds"]),
+                "estimated_remaining_seconds": snapshot["estimated_remaining_seconds"],
+                "status": snapshot["status"],
+            }
+            if snapshot["status"] == "failed" and snapshot.get("error"):
+                payload["error"] = snapshot["error"]
+
+            yield f"data: {json.dumps(payload)}\n\n"
+
+            if snapshot["status"] in ("completed", "failed"):
+                scan_sessions.drop_progress(scan_id)
+                return
+
+            time.sleep(SSE_POLL_INTERVAL_SECONDS)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @app.get("/api/scan/{scan_id}/results")
