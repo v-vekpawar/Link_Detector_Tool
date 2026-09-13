@@ -27,11 +27,13 @@ Run from backend/ with the venv active:
 import json
 import threading
 import time
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app import scan_sessions
@@ -490,3 +492,15 @@ def check_login_config(target_ip: str):
     if config is None:
         return LoginConfigResponse(exists=False)
     return LoginConfigResponse(exists=True, mode=config["mode"])
+
+
+# ---------------------------------------------------------------------------
+# Frontend (Step 9) — served from the same process so the VM only needs to
+# run one command. Resolved as an absolute path from this file's location
+# rather than a path relative to the working directory, so it works
+# whether uvicorn is launched from backend/ or elsewhere. Mounted last so
+# it never shadows an /api/* route registered above.
+# ---------------------------------------------------------------------------
+
+_FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
+app.mount("/", StaticFiles(directory=str(_FRONTEND_DIR), html=True), name="frontend")

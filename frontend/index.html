@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Link &amp; Navigation Audit</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="page-header">
+  <h1>Link &amp; Navigation Audit</h1>
+  <p class="page-subtitle">Checks one target for broken, inactive, IP-based, and internet-facing links.</p>
+</header>
+
+<main class="container">
+
+  <section id="last-scan" class="last-scan" hidden>
+    <h2 class="section-label">Last scan</h2>
+    <dl class="last-scan-grid">
+      <div><dt>Target</dt><dd id="last-scan-url" class="mono"></dd></div>
+      <div><dt>Reference IP</dt><dd id="last-scan-ip" class="mono"></dd></div>
+      <div><dt>Site type</dt><dd id="last-scan-site-type"></dd></div>
+      <div><dt>Ran</dt><dd id="last-scan-date"></dd></div>
+      <div><dt>Pages crawled</dt><dd id="last-scan-pages"></dd></div>
+      <div><dt>Links checked</dt><dd id="last-scan-links"></dd></div>
+    </dl>
+    <ul id="last-scan-counts" class="badge-row"></ul>
+  </section>
+
+  <form id="scan-form" novalidate>
+
+    <div class="field">
+      <label for="target-url">Target URL</label>
+      <input type="text" id="target-url" name="target_url" class="mono"
+             placeholder="https://10.0.0.1" autocomplete="off" required>
+      <p class="field-hint">The one IP being vetted — port 443.</p>
+    </div>
+
+    <fieldset class="field">
+      <legend>Site type</legend>
+      <div class="radio-row">
+        <label class="radio-option">
+          <input type="radio" name="site_type" value="static" checked>
+          <span>Static</span>
+        </label>
+        <label class="radio-option">
+          <input type="radio" name="site_type" value="dynamic">
+          <span>Dynamic</span>
+        </label>
+      </div>
+      <p class="field-hint">Dynamic renders JavaScript-injected links and enables login support.</p>
+    </fieldset>
+
+    <div class="field">
+      <label class="checkbox-option">
+        <input type="checkbox" id="requires-login">
+        <span>This site requires login</span>
+      </label>
+    </div>
+
+    <div id="login-fields" class="login-fields" hidden>
+
+      <fieldset class="field">
+        <legend>Login method</legend>
+        <div class="radio-row">
+          <label class="radio-option">
+            <input type="radio" name="login_mode" value="auto" checked>
+            <span>Auto-fill</span>
+          </label>
+          <label class="radio-option">
+            <input type="radio" name="login_mode" value="recorded">
+            <span>Recorded flow</span>
+          </label>
+        </div>
+      </fieldset>
+
+      <div id="login-auto-fields">
+        <div class="field">
+          <label for="login-url">Login page URL</label>
+          <input type="text" id="login-url" name="login_url" class="mono"
+                 placeholder="https://10.0.0.1/login" autocomplete="off">
+        </div>
+      </div>
+
+      <div id="login-recorded-fields" hidden>
+        <p id="recorded-flow-status" class="field-hint">Enter a target URL above to check for a recorded flow.</p>
+        <button type="button" id="record-flow-btn" class="btn btn-secondary">Record login flow</button>
+        <div id="record-flow-panel" class="record-flow-panel" hidden>
+          <p id="record-flow-message"></p>
+          <button type="button" id="record-flow-done-btn" class="btn btn-secondary">I've finished — save recording</button>
+        </div>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="login-username">Username</label>
+          <input type="text" id="login-username" name="username" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="login-password">Password</label>
+          <input type="password" id="login-password" name="password" autocomplete="off">
+        </div>
+      </div>
+      <p class="field-hint">Credentials are used for this scan only and are never stored.</p>
+
+    </div>
+
+    <div id="form-error" class="form-error" hidden role="alert"></div>
+
+    <button type="submit" id="start-scan-btn" class="btn btn-primary">Start scan</button>
+
+  </form>
+
+  <section id="progress-section" class="progress-section" hidden>
+    <h2 class="section-label">Scanning</h2>
+    <p id="progress-line" class="progress-line mono" aria-live="polite"></p>
+  </section>
+
+  <section id="results-section" class="results-section" hidden>
+    <h2 class="section-label">Results</h2>
+
+    <ul id="results-counts" class="badge-row"></ul>
+    <p id="results-meta" class="field-hint"></p>
+
+    <div class="table-scroll">
+      <table id="results-table">
+        <thead>
+          <tr>
+            <th>Found on page</th>
+            <th>Link</th>
+            <th>Category</th>
+            <th>Code snippet</th>
+            <th>Evidence / reason</th>
+            <th>Element location</th>
+          </tr>
+        </thead>
+        <tbody id="results-tbody"></tbody>
+      </table>
+    </div>
+    <p id="results-empty" class="field-hint" hidden>No issues found — every link checked out clean.</p>
+
+    <div class="export-row">
+      <button type="button" class="btn btn-secondary" disabled title="Export arrives in Step 10">Export Excel</button>
+      <button type="button" class="btn btn-secondary" disabled title="Export arrives in Step 10">Export PDF</button>
+      <span class="field-hint">Export arrives in Step 10.</span>
+    </div>
+  </section>
+
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
