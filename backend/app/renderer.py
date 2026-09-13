@@ -12,11 +12,12 @@ this module just hands rendered HTML back to the same extractor/classifier/
 crawler used for Static scans. See crawler.py's `page_html_fetcher` param.
 """
 
-from typing import Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 from app.config import REQUEST_TIMEOUT_SECONDS
+from app.login_replay import ReplayError, replay_login_steps
 
 # Rendering (navigation + JS execution) is slower than a plain HTTP GET,
 # so this gets a more generous budget than Tier 1's REQUEST_TIMEOUT_SECONDS.
@@ -128,5 +129,39 @@ class DynamicSession:
                 pass
 
             return True
+        finally:
+            page.close()
+
+    def replay_login(
+        self,
+        start_url: str,
+        recorded_steps: List[Dict[str, Any]],
+        username: str,
+        password: str,
+    ) -> Tuple[Optional[str], bool]:
+        """
+        Replays a previously-recorded login flow (login_recorder.py /
+        login_config_store.py — Step 7) against `start_url` (the URL that
+        was open when recording began). The actual step-by-step player
+        lives in login_replay.replay_login_steps — this just manages the
+        page lifecycle around it and matches render()/auto_login()'s
+        (html, success) return shape.
+
+        Returns (None, False) if the target's markup has drifted enough
+        since recording that a step's selector no longer resolves —
+        that's a real "this recording no longer works" signal the caller
+        should surface, not silently swallow.
+        """
+        page = self._context.new_page()
+        try:
+            page.goto(start_url, timeout=RENDER_TIMEOUT_MS, wait_until="load")
+            replay_login_steps(page, recorded_steps, username=username, password=password)
+            try:
+                page.wait_for_load_state("networkidle", timeout=RENDER_TIMEOUT_MS)
+            except PlaywrightTimeoutError:
+                pass
+            return page.content(), True
+        except (ReplayError, PlaywrightTimeoutError):
+            return None, False
         finally:
             page.close()

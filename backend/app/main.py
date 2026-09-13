@@ -1,13 +1,20 @@
 """
-FastAPI backend skeleton (Step 5 of BUILD_ORDER.md).
+FastAPI backend (Steps 5–7 of BUILD_ORDER.md).
 
 Wires /api/scan/start, /api/scan/{id}/results, /api/scan/last to the Tier 1
 engine SYNCHRONOUSLY — the HTTP request blocks until the whole crawl
 finishes. This is deliberately simple, just to confirm the plumbing works
 end-to-end. Async orchestration + SSE progress streaming come in Step 8.
 
-Only site_type="static" is wired up here — "dynamic" (Tier 2 / Playwright)
-lands in Step 6, and is rejected with a 400 for now.
+Both site_type values are wired up: "static" runs Tier 1 only; "dynamic"
+spins up a Tier 2 DynamicSession (Playwright) for login + JS rendering,
+handing rendered HTML back to the same Tier 1 extractor/crawler.
+
+Login modes for a dynamic scan:
+  - "auto": auto-fills a detected password field + nearby username field.
+  - "recorded": replays a previously-recorded click/fill flow (see
+    login_recorder.py / login_config_store.py). Requires having already
+    recorded one for this target via /api/login/record/start + /save.
 
 Run from backend/ with the venv active:
     uvicorn app.main:app --reload
@@ -23,6 +30,8 @@ from pydantic import BaseModel
 from app.config import extract_reference_ip
 from app.crawler import crawl_site
 from app.db import get_connection, init_db
+from app.login_config_store import get_login_config, save_recorded_login_config
+from app.login_record_sessions import get_session, pop_session, start_recording_session
 from app.renderer import DynamicSession
 
 app = FastAPI(title="Link & Navigation Audit Tool")
@@ -38,7 +47,7 @@ def on_startup():
 # ---------------------------------------------------------------------------
 
 class LoginConfig(BaseModel):
-    mode: str  # "auto" | "recorded" — "recorded" lands in Step 7
+    mode: str  # "auto" | "recorded"
     login_url: Optional[str] = None
     username: Optional[str] = None
     password: Optional[str] = None
@@ -52,6 +61,28 @@ class ScanStartRequest(BaseModel):
 
 class ScanStartResponse(BaseModel):
     scan_id: int
+
+
+class RecordStartRequest(BaseModel):
+    target_url: str
+
+
+class RecordStartResponse(BaseModel):
+    session_id: str
+
+
+class RecordSaveRequest(BaseModel):
+    session_id: str
+    target_ip: str
+
+
+class RecordSaveResponse(BaseModel):
+    saved: bool
+
+
+class LoginConfigResponse(BaseModel):
+    exists: bool
+    mode: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -116,10 +147,10 @@ def start_scan(payload: ScanStartRequest):
     if payload.site_type not in ("static", "dynamic"):
         raise HTTPException(status_code=400, detail="site_type must be 'static' or 'dynamic'.")
 
-    if payload.login is not None and payload.login.mode == "recorded":
+    if payload.login is not None and payload.login.mode == "recorded" and payload.site_type != "dynamic":
         raise HTTPException(
             status_code=400,
-            detail="login mode 'recorded' isn't implemented yet — it lands in Step 7. Use mode='auto' for now.",
+            detail="login mode 'recorded' requires site_type='dynamic' (replay uses the Tier 2 browser engine).",
         )
 
     reference_ip = extract_reference_ip(payload.target_url)
@@ -136,22 +167,62 @@ def start_scan(payload: ScanStartRequest):
             dyn_session = DynamicSession().start()
             page_html_fetcher = dyn_session.render
 
-            if payload.login is not None:  # mode == "auto" (recorded already rejected above)
-                if not (payload.login.login_url and payload.login.username and payload.login.password):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="login mode 'auto' requires login_url, username, and password.",
+            if payload.login is not None:  # mode == "auto" or "recorded"
+                if payload.login.mode == "auto":
+                    if not (payload.login.login_url and payload.login.username and payload.login.password):
+                        raise HTTPException(
+                            status_code=400,
+                            detail="login mode 'auto' requires login_url, username, and password.",
+                        )
+                    logged_in = dyn_session.auto_login(
+                        payload.login.login_url, payload.login.username, payload.login.password
                     )
-                logged_in = dyn_session.auto_login(
-                    payload.login.login_url, payload.login.username, payload.login.password
-                )
-                if not logged_in:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Could not find a password field on the login page — auto-login failed.",
+                    if not logged_in:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Could not find a password field on the login page — auto-login failed.",
+                        )
+                    session.cookies.update(dyn_session.cookies_for_requests())
+                    login_used = "auto"
+
+                elif payload.login.mode == "recorded":
+                    if not (payload.login.username and payload.login.password):
+                        raise HTTPException(
+                            status_code=400,
+                            detail="login mode 'recorded' requires username and password — credentials are "
+                                   "never stored, only the click/fill mechanism, so they must be supplied fresh "
+                                   "each scan.",
+                        )
+                    saved_config = get_login_config(reference_ip)
+                    if saved_config is None or saved_config["mode"] != "recorded":
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"No recorded login flow found for {reference_ip}. Record one first via "
+                                   f"/api/login/record/start.",
+                        )
+                    start_url = payload.login.login_url or saved_config["login_url"]
+                    if not start_url:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="No login URL available to replay against — the saved recording doesn't "
+                                   "have one and none was provided in this request.",
+                        )
+                    html, replay_ok = dyn_session.replay_login(
+                        start_url, saved_config["recorded_steps"], payload.login.username, payload.login.password
                     )
-                session.cookies.update(dyn_session.cookies_for_requests())
-                login_used = "auto"
+                    if not replay_ok:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Recorded login replay failed — the target's login page may have changed "
+                                   "since recording. Consider re-recording the flow.",
+                        )
+                    session.cookies.update(dyn_session.cookies_for_requests())
+                    login_used = "recorded"
+
+                else:
+                    raise HTTPException(
+                        status_code=400, detail=f"Unknown login mode: {payload.login.mode!r}"
+                    )
 
         conn = get_connection()
         try:
@@ -231,3 +302,43 @@ def get_last_scan():
     if row is None:
         raise HTTPException(status_code=404, detail="No scans yet.")
     return _build_results_payload(row["id"])
+
+
+@app.post("/api/login/record/start", response_model=RecordStartResponse)
+def start_login_recording(payload: RecordStartRequest):
+    """
+    Launches a headed Playwright window against payload.target_url for the
+    user to manually click through their login flow. Returns immediately —
+    the actual recording happens in a background thread and can take as
+    long as the user needs; call /api/login/record/save once they've
+    clicked "Finish Recording" in that window.
+    """
+    session_id = start_recording_session(payload.target_url)
+    return RecordStartResponse(session_id=session_id)
+
+
+@app.post("/api/login/record/save", response_model=RecordSaveResponse)
+def save_login_recording(payload: RecordSaveRequest):
+    session = get_session(payload.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="No recording session found for this session_id.")
+    if session["status"] == "running":
+        raise HTTPException(
+            status_code=409,
+            detail="Recording is still in progress — finish it in the browser window "
+                   "(click 'Finish Recording') before saving.",
+        )
+    if session["status"] == "error":
+        raise HTTPException(status_code=500, detail=f"Recording session failed: {session['error']}")
+
+    save_recorded_login_config(payload.target_ip, session["steps"], login_url=session["target_url"])
+    pop_session(payload.session_id)
+    return RecordSaveResponse(saved=True)
+
+
+@app.get("/api/login-config", response_model=LoginConfigResponse)
+def check_login_config(target_ip: str):
+    config = get_login_config(target_ip)
+    if config is None:
+        return LoginConfigResponse(exists=False)
+    return LoginConfigResponse(exists=True, mode=config["mode"])
