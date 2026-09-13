@@ -183,10 +183,14 @@ function initApp() {
     resultsMeta: document.getElementById("results-meta"),
     resultsTbody: document.getElementById("results-tbody"),
     resultsEmpty: document.getElementById("results-empty"),
+    exportXlsxBtn: document.getElementById("export-xlsx-btn"),
+    exportPdfBtn: document.getElementById("export-pdf-btn"),
+    exportStatus: document.getElementById("export-status"),
   };
 
   let activeRecordSessionId = null;
   let activeEventSource = null;
+  let currentScanId = null;
 
   function showFormError(message) {
     els.formError.textContent = message;
@@ -377,12 +381,34 @@ function initApp() {
   }
 
   function renderResults(results) {
+    currentScanId = results.scan.id;
     renderCategoryBadges(els.resultsCounts, results.summary);
     els.resultsMeta.textContent =
       `${results.scan.pages_crawled} pages crawled, ${results.scan.total_links_checked} links checked.`;
     renderResultsTable(results.findings);
     els.resultsSection.hidden = false;
   }
+
+  /**
+   * Export buttons just navigate to the export endpoint — the response
+   * carries Content-Disposition: attachment, so the browser downloads
+   * the file instead of replacing the page. No fetch/blob plumbing
+   * needed, which keeps this dependency-free per the frontend constraint.
+   */
+  function triggerExport(format) {
+    if (!currentScanId) {
+      els.exportStatus.textContent = "No scan results to export yet.";
+      return;
+    }
+    els.exportStatus.textContent = `Preparing ${format.toUpperCase()} export…`;
+    window.location.href = `/api/scan/${currentScanId}/export?format=${format}`;
+    setTimeout(() => {
+      els.exportStatus.textContent = "";
+    }, 2000);
+  }
+
+  els.exportXlsxBtn.addEventListener("click", () => triggerExport("xlsx"));
+  els.exportPdfBtn.addEventListener("click", () => triggerExport("pdf"));
 
   function renderLastScan(results) {
     els.lastScanUrl.textContent = results.scan.target_url;
@@ -401,6 +427,9 @@ function initApp() {
       if (!resp.ok) return; // 404 = no scans yet, leave the section hidden
       const data = await resp.json();
       renderLastScan(data);
+      // Also populate the full results table + export buttons on load,
+      // so a returning user can export the last scan without re-running it.
+      renderResults(data);
     } catch (e) {
       // Backend not reachable yet — last-scan panel just stays hidden.
     }

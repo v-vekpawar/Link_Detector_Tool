@@ -28,6 +28,7 @@ playwright==1.47.0
 # --- Export ---
 openpyxl==3.1.5
 reportlab==4.2.5
+pypdf==6.18.1
 
 # Dev/test-only dependencies — NOT needed on the offline VM, only for
 # running the test suite locally (pytest/TestClient use these).

@@ -12,7 +12,7 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Tag
 
-from app.config import EXCLUDED_SCHEMES
+from app.config import EXCLUDED_SCHEMES, is_inactive_href
 
 # (tag name, attribute holding the URL) — per ARCHITECTURE.md's extraction list
 LINK_BEARING_ATTRS = [
@@ -75,12 +75,16 @@ def extract_link_elements(html: str, page_url: str) -> List[LinkElement]:
             if any(raw_value.lower().startswith(scheme) for scheme in EXCLUDED_SCHEMES):
                 continue
 
+            absolute_url = urljoin(page_url, raw_value)
+            if is_inactive_href(raw_value) and not absolute_url.endswith("#"):
+                absolute_url += "#"
+
             elements.append(
                 LinkElement(
                     tag=tag_name,
                     attribute=attr_name,
                     raw_value=raw_value,
-                    absolute_url=urljoin(page_url, raw_value),
+                    absolute_url=absolute_url,
                     code_snippet=str(tag)[:300],
                     element_location=_build_css_path(tag),
                 )

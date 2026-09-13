@@ -115,6 +115,7 @@ def _row_to_scan_dict(row) -> dict:
         "target_url": row["target_url"],
         "target_ip": row["target_ip"],
         "site_type": row["site_type"],
+        "login_used": row["login_used"],
         "status": row["status"],
         "started_at": row["started_at"],
         "completed_at": row["completed_at"],
