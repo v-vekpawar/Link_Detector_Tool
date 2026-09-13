@@ -32,7 +32,7 @@ from typing import Any, Dict, Optional
 
 import requests
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -40,6 +40,7 @@ from app import scan_sessions
 from app.config import extract_reference_ip
 from app.crawler import crawl_site
 from app.db import get_connection, init_db
+from app.export import build_pdf_bytes, build_xlsx_bytes
 from app.login_config_store import get_login_config, save_recorded_login_config
 from app.login_record_sessions import get_session, pop_session, start_recording_session
 from app.renderer import DynamicSession
@@ -440,6 +441,41 @@ def get_scan_results(scan_id: int):
     if payload is None:
         raise HTTPException(status_code=404, detail="Scan not found.")
     return payload
+
+
+_EXPORT_CONTENT_TYPES = {
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pdf": "application/pdf",
+}
+
+
+@app.get("/api/scan/{scan_id}/export")
+def export_scan(scan_id: int, format: str):
+    """
+    Streams a generated export file for a completed (or in-progress) scan.
+    `format` must be "xlsx" or "pdf" per API_SPEC.md. Building happens
+    synchronously here — export.py's builders are pure and fast (no
+    network calls), so there's no need for the background-thread pattern
+    used for scans themselves.
+    """
+    if format not in _EXPORT_CONTENT_TYPES:
+        raise HTTPException(status_code=400, detail="format must be 'xlsx' or 'pdf'.")
+
+    payload = _build_results_payload(scan_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+
+    if format == "xlsx":
+        file_bytes = build_xlsx_bytes(payload["scan"], payload["findings"])
+    else:
+        file_bytes = build_pdf_bytes(payload["scan"], payload["findings"])
+
+    filename = f"scan_{scan_id}_findings.{format}"
+    return Response(
+        content=file_bytes,
+        media_type=_EXPORT_CONTENT_TYPES[format],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/scan/last")
