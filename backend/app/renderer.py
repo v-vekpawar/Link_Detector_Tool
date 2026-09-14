@@ -14,6 +14,9 @@ crawler used for Static scans. See crawler.py's `page_html_fetcher` param.
 
 from typing import Any, Dict, List, Optional, Tuple
 
+import asyncio
+import sys
+
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 from app.config import REQUEST_TIMEOUT_SECONDS
@@ -22,6 +25,33 @@ from app.login_replay import ReplayError, replay_login_steps
 # Rendering (navigation + JS execution) is slower than a plain HTTP GET,
 # so this gets a more generous budget than Tier 1's REQUEST_TIMEOUT_SECONDS.
 RENDER_TIMEOUT_MS = REQUEST_TIMEOUT_SECONDS * 1000 * 2
+
+
+def ensure_windows_subprocess_support() -> None:
+    """
+    Playwright's sync API drives its driver process through an internal
+    asyncio event loop. On Windows, only ProactorEventLoop supports
+    launching subprocesses (asyncio.create_subprocess_exec) — a
+    SelectorEventLoop doesn't implement it and raises NotImplementedError
+    instead, immediately, with an empty message (bubbles up to the UI as
+    "unknown error").
+
+    Observed cause: running under `uvicorn --reload` on Windows, the
+    asyncio event loop policy active in this background scan-worker thread
+    is Selector by the time sync_playwright() creates its own loop here.
+
+    This switches the *policy* used for any event loop created from this
+    point on to Proactor. Safe to call repeatedly (idempotent) and safe to
+    call from a background thread — it only affects loops created after
+    this call (exactly what sync_playwright() is about to do), not
+    uvicorn's already-running main-thread loop.
+
+    Call this as the first line of any function that calls
+    sync_playwright() — currently DynamicSession.start() below and
+    LoginRecordingSession.run() in login_recorder.py.
+    """
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 
 class DynamicSession:
@@ -44,6 +74,7 @@ class DynamicSession:
         self._context = None
 
     def start(self) -> "DynamicSession":
+        ensure_windows_subprocess_support()
         self._playwright = sync_playwright().start()
         self._browser = self._playwright.chromium.launch(headless=True)
         self._context = self._browser.new_context(ignore_https_errors=True)

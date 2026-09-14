@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from app.config import is_inactive_href, classify_host
+from app.config import is_inactive_href, classify_host, is_excluded_domain
 from app.extractor import LinkElement
 from app.link_checker import check_link_status
 
@@ -48,14 +48,25 @@ def classify_link(
 
     host = urlparse(element.absolute_url).hostname or ""
     host_class = classify_host(host, reference_ip)
-    if host_class == "ip_based":
-        categories.append("ip_based")
-        evidence_parts.append(f"resolves to {host} (differs from reference IP {reference_ip})")
-    elif host_class == "internet":
-        categories.append("internet")
-        evidence_parts.append(f"references external hostname {host}")
+    # An excluded domain is known-fine on the private network — just not
+    # reachable from here. Suppress only the "internet" tag for it (scope
+    # per config.py's is_excluded_domain docstring); ip_based classification
+    # is untouched.
+    excluded = host_class == "internet" and is_excluded_domain(host)
 
-    if not is_inactive:
+    if not excluded:
+        if host_class == "ip_based":
+            categories.append("ip_based")
+            evidence_parts.append(f"resolves to {host} (differs from reference IP {reference_ip})")
+        elif host_class == "internet":
+            categories.append("internet")
+            evidence_parts.append(f"references external hostname {host}")
+
+    # Skip the broken-status fetch too when excluded — there's no point
+    # checking reachability for a host we already know isn't reachable
+    # from this network by design, and doing so would just add a
+    # meaningless "broken" tag to a link that's actually fine.
+    if not is_inactive and not excluded:
         result = check_link_status(element.absolute_url, session=session)
         if result["broken"]:
             categories.append("broken")

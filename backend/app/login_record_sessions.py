@@ -45,7 +45,9 @@ def start_recording_session(target_url: str) -> str:
         except Exception as e:
             with _lock:
                 _sessions[session_id]["status"] = "error"
-                _sessions[session_id]["error"] = str(e)
+                # See main.py's _run_scan_worker for why: some exceptions
+                # (e.g. asyncio's bare NotImplementedError) carry no message.
+                _sessions[session_id]["error"] = str(e) or type(e).__name__
 
     threading.Thread(target=_worker, daemon=True).start()
     return session_id

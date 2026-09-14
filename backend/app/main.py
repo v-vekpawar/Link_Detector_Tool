@@ -106,7 +106,10 @@ class LoginConfigResponse(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
-FINDING_CATEGORY_KEYS = ("broken", "inactive", "ip_based", "internet")
+FINDING_CATEGORY_KEYS = (
+    "broken", "inactive", "ip_based", "internet",
+    "commented_link", "inline_css", "internal_css", "inline_js", "internal_js",
+)
 
 
 def _row_to_scan_dict(row) -> dict:
@@ -319,7 +322,12 @@ def _run_scan_worker(scan_id: int, target_url: str, site_type: str, reference_ip
                 (scan_id,),
             )
             conn.commit()
-            scan_sessions.finish_progress(scan_id, "failed", error=str(e))
+            # Some exceptions (e.g. asyncio's bare NotImplementedError) carry
+            # no message — str(e) would be "" and the frontend falls back to
+            # a generic "unknown error". Including the exception type keeps
+            # that fallback at least somewhat diagnostic.
+            error_message = str(e) or type(e).__name__
+            scan_sessions.finish_progress(scan_id, "failed", error=error_message)
     finally:
         conn.close()
         if dyn_session is not None:

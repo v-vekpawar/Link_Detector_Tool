@@ -42,6 +42,30 @@ def extract_reference_ip(target_url: str) -> str:
     return host
 
 
+# ---------------------------------------------------------------------------
+# Excluded domains
+# ---------------------------------------------------------------------------
+# Hostnames that are valid/working on the private network but simply aren't
+# reachable from this VM (or any machine on the public-facing side of the
+# network) — e.g. an internal-only service the target site happens to
+# reference. These should NOT be flagged as "internet" links, and are
+# omitted from the findings entirely (not just re-labeled), since they're
+# known-fine, not an issue to report.
+#
+# Exact hostname match only (no wildcard/subdomain matching). Edit this set
+# per deployment as real target sites reveal domains that need excluding.
+#
+# Example: EXCLUDED_DOMAINS = {"xyz.abc", "internal-crm.corp"}
+EXCLUDED_DOMAINS: set = {"linkdin.com"}
+
+
+def is_excluded_domain(host: str) -> bool:
+    """True if `host` is an exact (case-insensitive) match in EXCLUDED_DOMAINS."""
+    if not host:
+        return False
+    return host.strip().lower() in {d.lower() for d in EXCLUDED_DOMAINS}
+
+
 def classify_host(host: str, reference_ip: str) -> str:
     """
     Returns one of: "same" | "ip_based" | "internet"

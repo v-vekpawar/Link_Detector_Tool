@@ -86,6 +86,12 @@ function parseCategories(categoryString) {
   return CATEGORY_ORDER.filter((c) => present.has(c));
 }
 
+/** Returns the subset of `findings` matching `category` ("all" or one of CATEGORY_ORDER). */
+function filterFindingsByCategory(findings, category) {
+  if (!category || category === "all") return findings;
+  return findings.filter((f) => parseCategories(f.category).includes(category));
+}
+
 function formatDuration(totalSeconds) {
   if (totalSeconds == null || Number.isNaN(totalSeconds)) return "—";
   const seconds = Math.max(0, Math.round(totalSeconds));
@@ -129,6 +135,7 @@ const logic = {
   extractHost,
   buildScanPayload,
   parseCategories,
+  filterFindingsByCategory,
   formatDuration,
   formatProgressLine,
   CATEGORY_LABELS,
@@ -179,7 +186,7 @@ function initApp() {
     progressLine: document.getElementById("progress-line"),
 
     resultsSection: document.getElementById("results-section"),
-    resultsCounts: document.getElementById("results-counts"),
+    resultsTabs: document.getElementById("results-tabs"),
     resultsMeta: document.getElementById("results-meta"),
     resultsTbody: document.getElementById("results-tbody"),
     resultsEmpty: document.getElementById("results-empty"),
@@ -191,6 +198,10 @@ function initApp() {
   let activeRecordSessionId = null;
   let activeEventSource = null;
   let currentScanId = null;
+  let latestFindings = [];
+  let latestSummary = {};
+  let latestCrawlStats = { pages_crawled: null, total_links_checked: null };
+  let activeCategoryFilter = "all";
 
   function showFormError(message) {
     els.formError.textContent = message;
@@ -335,9 +346,58 @@ function initApp() {
     });
   }
 
+  /**
+   * Single-select filter tabs for the results table: "All" plus one per
+   * category, each labeled with its count. Selecting a tab re-filters the
+   * table and updates the meta line to reflect the active filter.
+   */
+  function renderResultsTabs(container, summary) {
+    container.innerHTML = "";
+    const total = Object.values(summary).reduce((sum, n) => sum + n, 0);
+
+    const tabs = [{ key: "all", label: "All", count: total }].concat(
+      logic.CATEGORY_ORDER.map((cat) => ({
+        key: cat,
+        label: logic.CATEGORY_LABELS[cat],
+        count: summary[cat] || 0,
+      }))
+    );
+
+    tabs.forEach(({ key, label, count }) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `tab tab-${key}`;
+      btn.setAttribute("role", "tab");
+      btn.setAttribute("aria-selected", String(key === activeCategoryFilter));
+      if (key === activeCategoryFilter) btn.classList.add("active");
+      btn.textContent = `${label} (${count})`;
+      btn.addEventListener("click", () => {
+        activeCategoryFilter = key;
+        renderResultsTabs(container, summary);
+        applyResultsFilter();
+      });
+      container.appendChild(btn);
+    });
+  }
+
+  function applyResultsFilter() {
+    const filtered = logic.filterFindingsByCategory(latestFindings, activeCategoryFilter);
+    renderResultsTable(filtered);
+    const shownLabel =
+      activeCategoryFilter === "all"
+        ? `${latestFindings.length} finding${latestFindings.length === 1 ? "" : "s"}`
+        : `${filtered.length} of ${latestFindings.length} findings (${logic.CATEGORY_LABELS[activeCategoryFilter]})`;
+    els.resultsMeta.textContent =
+      `${latestCrawlStats.pages_crawled} pages crawled, ${latestCrawlStats.total_links_checked} links checked. Showing ${shownLabel}.`;
+  }
+
   function renderResultsTable(findings) {
     els.resultsTbody.innerHTML = "";
     els.resultsEmpty.hidden = findings.length !== 0;
+    els.resultsEmpty.textContent =
+      findings.length === 0 && activeCategoryFilter !== "all"
+        ? `No ${logic.CATEGORY_LABELS[activeCategoryFilter].toLowerCase()} findings in this scan.`
+        : "No issues found — every link checked out clean.";
 
     findings.forEach((finding) => {
       const tr = document.createElement("tr");
@@ -382,10 +442,15 @@ function initApp() {
 
   function renderResults(results) {
     currentScanId = results.scan.id;
-    renderCategoryBadges(els.resultsCounts, results.summary);
-    els.resultsMeta.textContent =
-      `${results.scan.pages_crawled} pages crawled, ${results.scan.total_links_checked} links checked.`;
-    renderResultsTable(results.findings);
+    latestFindings = results.findings;
+    latestSummary = results.summary;
+    latestCrawlStats = {
+      pages_crawled: results.scan.pages_crawled,
+      total_links_checked: results.scan.total_links_checked,
+    };
+    activeCategoryFilter = "all";
+    renderResultsTabs(els.resultsTabs, latestSummary);
+    applyResultsFilter();
     els.resultsSection.hidden = false;
   }
 

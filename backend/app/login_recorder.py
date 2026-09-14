@@ -31,7 +31,7 @@ from typing import Any, Dict, List, Optional
 
 from playwright.sync_api import sync_playwright
 
-from app.renderer import RENDER_TIMEOUT_MS
+from app.renderer import RENDER_TIMEOUT_MS, ensure_windows_subprocess_support
 
 # Safety cap: if the user never clicks "Finish Recording" and never closes
 # the window, give up after this long so a script/API call can't hang
@@ -154,6 +154,7 @@ class LoginRecordingSession:
         headless: bool = False,
         extra_launch_args: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
+        ensure_windows_subprocess_support()
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=headless, args=list(extra_launch_args or []))
             try:
