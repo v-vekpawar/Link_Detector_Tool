@@ -76,7 +76,7 @@ class DynamicSession:
     def start(self) -> "DynamicSession":
         ensure_windows_subprocess_support()
         self._playwright = sync_playwright().start()
-        self._browser = self._playwright.chromium.launch(headless=True)
+        self._browser = self._playwright.chromium.launch(headless=False)
         self._context = self._browser.new_context(ignore_https_errors=True)
         return self
 

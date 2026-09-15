@@ -28,6 +28,18 @@
   --internet: #146a5b;
   --internet-soft: #e0efeb;
 
+  /* Source-code-scan categories (comments + inline/internal css/js) */
+  --commented-link: #a3291f;
+  --commented-link-soft: #f6e4e2;
+  --inline-css: #1c5f8a;
+  --inline-css-soft: #dfecf4;
+  --internal-css: #1c5f8a;
+  --internal-css-soft: #dfecf4;
+  --inline-js: #8a5a00;
+  --inline-js-soft: #f6ecd9;
+  --internal-js: #8a5a00;
+  --internal-js-soft: #f6ecd9;
+
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
 
@@ -284,6 +296,42 @@ input:focus-visible {
 .badge-inactive { background: var(--warning-soft); color: var(--warning); }
 .badge-ip_based { background: var(--ip-based-soft); color: var(--ip-based); }
 .badge-internet { background: var(--internet-soft); color: var(--internet); }
+.badge-commented_link { background: var(--commented-link-soft); color: var(--commented-link); }
+.badge-inline_css { background: var(--inline-css-soft); color: var(--inline-css); }
+.badge-internal_css { background: var(--internal-css-soft); color: var(--internal-css); }
+.badge-inline_js { background: var(--inline-js-soft); color: var(--inline-js); }
+.badge-internal_js { background: var(--internal-js-soft); color: var(--internal-js); }
+
+/* --- Section switch (Links / Source Code) --- */
+
+.section-switch {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.section-switch-btn {
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 8px 4px;
+  margin-right: 20px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.section-switch-btn:hover {
+  color: var(--ink);
+}
+
+.section-switch-btn.active {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
 
 /* --- Filter tabs (single-select) --- */
 
@@ -324,6 +372,11 @@ input:focus-visible {
 .tab-inactive.active { background: var(--warning); }
 .tab-ip_based.active { background: var(--ip-based); }
 .tab-internet.active { background: var(--internet); }
+.tab-commented_link.active { background: var(--commented-link); }
+.tab-inline_css.active { background: var(--inline-css); }
+.tab-internal_css.active { background: var(--internal-css); }
+.tab-inline_js.active { background: var(--inline-js); }
+.tab-internal_js.active { background: var(--internal-js); }
 
 .table-scroll {
   overflow-x: auto;

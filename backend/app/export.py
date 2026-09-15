@@ -45,6 +45,11 @@ CATEGORY_LABELS = {
     "inactive": "Inactive",
     "ip_based": "IP-based",
     "internet": "Internet",
+    "commented_link": "Commented Link",
+    "inline_css": "Inline CSS",
+    "internal_css": "Internal CSS",
+    "inline_js": "Inline JS",
+    "internal_js": "Internal JS",
 }
 
 

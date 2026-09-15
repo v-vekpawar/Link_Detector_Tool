@@ -26,6 +26,7 @@ import requests
 from app.config import MAX_PAGES_PER_SCAN, classify_host, is_inactive_href
 from app.classifier import classify_link
 from app.extractor import extract_link_elements
+from app.source_scanner import scan_source_code
 
 ANCHOR_LIKE_TAGS = ("a", "area")
 
@@ -54,6 +55,13 @@ def crawl_site(
                             evidence, element_location}, ... ],
             "visited_pages": [str, ...]   # normalized URLs, for inspection/tests
         }
+
+    `findings` mixes two families, distinguished by `category`: the four
+    link-validity categories from classify_link (broken/inactive/ip_based/
+    internet — always have a non-null `link`), and the five source-code-
+    scan categories from scan_source_code (commented_link/inline_css/
+    internal_css/inline_js/internal_js — `link` is always None, since
+    these aren't about a specific link target). See source_scanner.py.
 
     `progress_callback`, if given, is called after each page finishes
     processing as progress_callback(pages_crawled=int, links_checked=int,
@@ -112,6 +120,14 @@ def crawl_site(
             html = resp.text
 
         elements = extract_link_elements(html, page_url)
+
+        # Source-code scan (comments across html/css/js, inline/internal
+        # css/js inventory) — a separate check from link validity, run
+        # once per page against the same HTML already fetched/rendered
+        # above. See source_scanner.py docstring for scope/assumptions.
+        for source_finding in scan_source_code(html, page_url):
+            all_findings.append(dict(source_finding, found_on_page=page_url))
+
         for element in elements:
             total_links_checked += 1
             finding = classify_link(element, reference_ip, session=sess)

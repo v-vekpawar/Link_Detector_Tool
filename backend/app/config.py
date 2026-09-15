@@ -56,7 +56,7 @@ def extract_reference_ip(target_url: str) -> str:
 # per deployment as real target sites reveal domains that need excluding.
 #
 # Example: EXCLUDED_DOMAINS = {"xyz.abc", "internal-crm.corp"}
-EXCLUDED_DOMAINS: set = {"linkdin.com"}
+EXCLUDED_DOMAINS: set = set()
 
 
 def is_excluded_domain(host: str) -> bool:
@@ -69,12 +69,24 @@ def is_excluded_domain(host: str) -> bool:
 def classify_host(host: str, reference_ip: str) -> str:
     """
     Returns one of: "same" | "ip_based" | "internet"
-    - same: host matches the reference IP (normal internal link, keep crawling)
+    - same: host matches the reference target (normal internal link, keep crawling)
     - ip_based: host is a literal IP, but different from reference_ip
-    - internet: host is a real hostname (not an IP at all)
+    - internet: host is a real hostname (not an IP), and isn't the reference target itself
+
+    The tool's designed usage is a literal-IP reference target (one VM = one
+    app, per BUILD_PLAN.md #3) — that's the `is_literal_ip(host)` branch
+    below, unchanged. The hostname-equality check right after it is a
+    convenience addition for testing against a real domain (e.g.
+    lumen5.com) instead of an internal VM's IP: without it, EVERY same-site
+    link on a hostname target gets misclassified "internet" (since it's
+    never a literal IP) and is never followed, so the crawl can't get past
+    the first page. This doesn't change literal-IP behavior at all — a
+    hostname link still can't equal a literal-IP reference_ip.
     """
     if is_literal_ip(host):
         return "same" if host == reference_ip else "ip_based"
+    if host.lower() == (reference_ip or "").lower():
+        return "same"
     return "internet"
 
 

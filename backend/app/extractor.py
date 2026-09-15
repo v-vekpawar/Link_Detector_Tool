@@ -35,7 +35,7 @@ class LinkElement:
     element_location: str   # best-effort CSS-ish path, e.g. "html > body > nav > a:nth-of-type(2)"
 
 
-def _build_css_path(tag: Tag) -> str:
+def build_css_path(tag: Tag) -> str:
     """Best-effort locator: walk up parents, tagging repeated siblings with :nth-of-type."""
     parts = []
     node = tag
@@ -86,7 +86,7 @@ def extract_link_elements(html: str, page_url: str) -> List[LinkElement]:
                     raw_value=raw_value,
                     absolute_url=absolute_url,
                     code_snippet=str(tag)[:300],
-                    element_location=_build_css_path(tag),
+                    element_location=build_css_path(tag),
                 )
             )
 

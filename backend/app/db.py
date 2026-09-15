@@ -14,10 +14,22 @@ Usage:
 import sqlite3
 from pathlib import Path
 
-from app.config import DATABASE_PATH
+from app.config import DATABASE_PATH as _CONFIGURED_DATABASE_PATH
 
 APP_DIR = Path(__file__).resolve().parent
 SCHEMA_PATH = APP_DIR / "schema.sql"
+
+# config.py's DATABASE_PATH is normally just a bare filename ("link_audit.db").
+# sqlite3.connect() resolves a relative path against the process's current
+# working directory *at connect time* — NOT this module's location — so
+# the .db file's actual location has silently depended on wherever the
+# server (or a test run) happened to be launched from (observed: it ended
+# up under backend/tests/ instead of backend/app/ depending on cwd).
+# Anchoring a relative DATABASE_PATH to APP_DIR here — same as SCHEMA_PATH
+# already does — makes the location stable regardless of cwd. An absolute
+# path in config.py (if set explicitly later) is left untouched.
+_configured_path = Path(_CONFIGURED_DATABASE_PATH)
+DATABASE_PATH = str(_configured_path if _configured_path.is_absolute() else APP_DIR / _configured_path)
 
 
 def get_connection() -> sqlite3.Connection:

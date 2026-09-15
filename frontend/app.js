@@ -7,14 +7,29 @@
    inside initApp(), which only runs in an actual browser.
    --------------------------------------------------------------------- */
 
-const CATEGORY_LABELS = {
+const LINK_CATEGORY_LABELS = {
   broken: "Broken",
   inactive: "Inactive",
   ip_based: "IP-based",
   internet: "Internet",
 };
 
-const CATEGORY_ORDER = ["broken", "inactive", "ip_based", "internet"];
+const LINK_CATEGORY_ORDER = ["broken", "inactive", "ip_based", "internet"];
+
+// Kept as aliases for backward compatibility with any external callers that
+// referenced the pre-two-section names.
+const CATEGORY_LABELS = LINK_CATEGORY_LABELS;
+const CATEGORY_ORDER = LINK_CATEGORY_ORDER;
+
+const SOURCE_CATEGORY_LABELS = {
+  commented_link: "Commented Link",
+  inline_css: "Inline CSS",
+  internal_css: "Internal CSS",
+  inline_js: "Inline JS",
+  internal_js: "Internal JS",
+};
+
+const SOURCE_CATEGORY_ORDER = ["commented_link", "inline_css", "internal_css", "inline_js", "internal_js"];
 
 /** Matches a literal IPv4 host (e.g. "10.0.0.1"), same rule as config.py's is_literal_ip for dotted-quad hosts. */
 function isLiteralIPv4(host) {
@@ -75,21 +90,38 @@ function buildScanPayload(state) {
   return { payload };
 }
 
-/** Splits a possibly comma-separated category string ("internet,broken") into an ordered, deduped list. */
-function parseCategories(categoryString) {
+/** Splits a possibly comma-separated category string ("internet,broken") into an ordered, deduped list, per `order`. */
+function parseCategories(categoryString, order = CATEGORY_ORDER) {
   const present = new Set(
     (categoryString || "")
       .split(",")
       .map((c) => c.trim())
       .filter(Boolean)
   );
-  return CATEGORY_ORDER.filter((c) => present.has(c));
+  return order.filter((c) => present.has(c));
 }
 
-/** Returns the subset of `findings` matching `category` ("all" or one of CATEGORY_ORDER). */
-function filterFindingsByCategory(findings, category) {
+/** Returns the subset of `findings` matching `category` ("all" or one of `order`). */
+function filterFindingsByCategory(findings, category, order = CATEGORY_ORDER) {
   if (!category || category === "all") return findings;
-  return findings.filter((f) => parseCategories(f.category).includes(category));
+  return findings.filter((f) => parseCategories(f.category, order).includes(category));
+}
+
+/**
+ * Splits findings into the two result sections: `source` for the
+ * source-code-scan categories (comments + inline/internal css/js),
+ * `links` for everything else (the four original link categories). A
+ * finding only ever carries tags from one family (classify_link and
+ * scan_source_code never mix), so exact partitioning is safe.
+ */
+function partitionFindings(findings) {
+  const linkFindings = [];
+  const sourceFindings = [];
+  findings.forEach((f) => {
+    const isSource = (f.category || "").split(",").some((c) => SOURCE_CATEGORY_ORDER.includes(c.trim()));
+    (isSource ? sourceFindings : linkFindings).push(f);
+  });
+  return { linkFindings, sourceFindings };
 }
 
 function formatDuration(totalSeconds) {
@@ -136,10 +168,15 @@ const logic = {
   buildScanPayload,
   parseCategories,
   filterFindingsByCategory,
+  partitionFindings,
   formatDuration,
   formatProgressLine,
   CATEGORY_LABELS,
   CATEGORY_ORDER,
+  LINK_CATEGORY_LABELS,
+  LINK_CATEGORY_ORDER,
+  SOURCE_CATEGORY_LABELS,
+  SOURCE_CATEGORY_ORDER,
 };
 
 if (typeof module !== "undefined" && module.exports) {
@@ -163,6 +200,7 @@ function initApp() {
     lastScanDate: document.getElementById("last-scan-date"),
     lastScanPages: document.getElementById("last-scan-pages"),
     lastScanLinks: document.getElementById("last-scan-links"),
+    lastScanStatus: document.getElementById("last-scan-status"),
     lastScanCounts: document.getElementById("last-scan-counts"),
 
     form: document.getElementById("scan-form"),
@@ -186,6 +224,7 @@ function initApp() {
     progressLine: document.getElementById("progress-line"),
 
     resultsSection: document.getElementById("results-section"),
+    resultsSectionSwitch: document.getElementById("results-section-switch"),
     resultsTabs: document.getElementById("results-tabs"),
     resultsMeta: document.getElementById("results-meta"),
     resultsTbody: document.getElementById("results-tbody"),
@@ -198,10 +237,11 @@ function initApp() {
   let activeRecordSessionId = null;
   let activeEventSource = null;
   let currentScanId = null;
-  let latestFindings = [];
+  let linkFindings = [];
+  let sourceFindings = [];
   let latestSummary = {};
   let latestCrawlStats = { pages_crawled: null, total_links_checked: null };
-  let activeCategoryFilter = "all";
+  let currentResultsSection = "links";
 
   function showFormError(message) {
     els.formError.textContent = message;
@@ -346,21 +386,39 @@ function initApp() {
     });
   }
 
-  /**
-   * Single-select filter tabs for the results table: "All" plus one per
-   * category, each labeled with its count. Selecting a tab re-filters the
-   * table and updates the meta line to reflect the active filter.
-   */
-  function renderResultsTabs(container, summary) {
-    container.innerHTML = "";
-    const total = Object.values(summary).reduce((sum, n) => sum + n, 0);
+  // Two independently-filterable result sections: Links (existing four
+  // categories) and Source Code (comments + inline/internal css/js, per
+  // the source-code-scan feature). Each keeps its own active tab so
+  // switching sections doesn't lose the other's filter selection.
+  const RESULT_SECTIONS = {
+    links: { order: logic.LINK_CATEGORY_ORDER, labels: logic.LINK_CATEGORY_LABELS },
+    source: { order: logic.SOURCE_CATEGORY_ORDER, labels: logic.SOURCE_CATEGORY_LABELS },
+  };
+  let activeFilters = { links: "all", source: "all" };
 
-    const tabs = [{ key: "all", label: "All", count: total }].concat(
-      logic.CATEGORY_ORDER.map((cat) => ({
-        key: cat,
-        label: logic.CATEGORY_LABELS[cat],
-        count: summary[cat] || 0,
-      }))
+  function currentSectionConfig() {
+    return RESULT_SECTIONS[currentResultsSection];
+  }
+
+  function currentSectionFindings() {
+    return currentResultsSection === "links" ? linkFindings : sourceFindings;
+  }
+
+  /**
+   * Single-select filter tabs for the active section's results table: "All"
+   * plus one per category, each labeled with its count (pulled straight
+   * from the scan's summary, which already covers every category across
+   * both sections). Selecting a tab re-filters the table and updates the
+   * meta line to reflect the active filter.
+   */
+  function renderResultsTabs() {
+    const { order, labels } = currentSectionConfig();
+    const activeFilter = activeFilters[currentResultsSection];
+    const sectionTotal = order.reduce((sum, cat) => sum + (latestSummary[cat] || 0), 0);
+
+    els.resultsTabs.innerHTML = "";
+    const tabs = [{ key: "all", label: "All", count: sectionTotal }].concat(
+      order.map((cat) => ({ key: cat, label: labels[cat], count: latestSummary[cat] || 0 }))
     );
 
     tabs.forEach(({ key, label, count }) => {
@@ -368,36 +426,52 @@ function initApp() {
       btn.type = "button";
       btn.className = `tab tab-${key}`;
       btn.setAttribute("role", "tab");
-      btn.setAttribute("aria-selected", String(key === activeCategoryFilter));
-      if (key === activeCategoryFilter) btn.classList.add("active");
+      btn.setAttribute("aria-selected", String(key === activeFilter));
+      if (key === activeFilter) btn.classList.add("active");
       btn.textContent = `${label} (${count})`;
       btn.addEventListener("click", () => {
-        activeCategoryFilter = key;
-        renderResultsTabs(container, summary);
-        applyResultsFilter();
+        activeFilters[currentResultsSection] = key;
+        refreshResultsView();
       });
-      container.appendChild(btn);
+      els.resultsTabs.appendChild(btn);
+    });
+  }
+
+  function renderSectionSwitch() {
+    els.resultsSectionSwitch.querySelectorAll(".section-switch-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.section === currentResultsSection);
     });
   }
 
   function applyResultsFilter() {
-    const filtered = logic.filterFindingsByCategory(latestFindings, activeCategoryFilter);
-    renderResultsTable(filtered);
+    const { order, labels } = currentSectionConfig();
+    const activeFilter = activeFilters[currentResultsSection];
+    const sectionFindings = currentSectionFindings();
+    const filtered = logic.filterFindingsByCategory(sectionFindings, activeFilter, order);
+    renderResultsTable(filtered, order, labels, activeFilter);
+
     const shownLabel =
-      activeCategoryFilter === "all"
-        ? `${latestFindings.length} finding${latestFindings.length === 1 ? "" : "s"}`
-        : `${filtered.length} of ${latestFindings.length} findings (${logic.CATEGORY_LABELS[activeCategoryFilter]})`;
+      activeFilter === "all"
+        ? `${sectionFindings.length} finding${sectionFindings.length === 1 ? "" : "s"}`
+        : `${filtered.length} of ${sectionFindings.length} findings (${labels[activeFilter]})`;
     els.resultsMeta.textContent =
       `${latestCrawlStats.pages_crawled} pages crawled, ${latestCrawlStats.total_links_checked} links checked. Showing ${shownLabel}.`;
   }
 
-  function renderResultsTable(findings) {
+  /** Re-renders the section switch, tabs, and table together — call after any filter/section change. */
+  function refreshResultsView() {
+    renderSectionSwitch();
+    renderResultsTabs();
+    applyResultsFilter();
+  }
+
+  function renderResultsTable(findings, order, labels, activeFilter) {
     els.resultsTbody.innerHTML = "";
     els.resultsEmpty.hidden = findings.length !== 0;
     els.resultsEmpty.textContent =
-      findings.length === 0 && activeCategoryFilter !== "all"
-        ? `No ${logic.CATEGORY_LABELS[activeCategoryFilter].toLowerCase()} findings in this scan.`
-        : "No issues found — every link checked out clean.";
+      findings.length === 0 && activeFilter !== "all"
+        ? `No ${labels[activeFilter].toLowerCase()} findings in this scan.`
+        : "No issues found in this section.";
 
     findings.forEach((finding) => {
       const tr = document.createElement("tr");
@@ -409,14 +483,14 @@ function initApp() {
 
       const linkTd = document.createElement("td");
       linkTd.className = "mono";
-      linkTd.textContent = finding.link;
+      linkTd.textContent = finding.link || "—";
       tr.appendChild(linkTd);
 
       const categoryTd = document.createElement("td");
-      logic.parseCategories(finding.category).forEach((cat) => {
+      logic.parseCategories(finding.category, order).forEach((cat) => {
         const span = document.createElement("span");
         span.className = `badge badge-${cat}`;
-        span.textContent = logic.CATEGORY_LABELS[cat];
+        span.textContent = labels[cat];
         span.style.marginRight = "4px";
         categoryTd.appendChild(span);
       });
@@ -442,15 +516,18 @@ function initApp() {
 
   function renderResults(results) {
     currentScanId = results.scan.id;
-    latestFindings = results.findings;
     latestSummary = results.summary;
     latestCrawlStats = {
       pages_crawled: results.scan.pages_crawled,
       total_links_checked: results.scan.total_links_checked,
     };
-    activeCategoryFilter = "all";
-    renderResultsTabs(els.resultsTabs, latestSummary);
-    applyResultsFilter();
+    const partitioned = logic.partitionFindings(results.findings);
+    linkFindings = partitioned.linkFindings;
+    sourceFindings = partitioned.sourceFindings;
+
+    currentResultsSection = "links";
+    activeFilters = { links: "all", source: "all" };
+    refreshResultsView();
     els.resultsSection.hidden = false;
   }
 
@@ -475,14 +552,35 @@ function initApp() {
   els.exportXlsxBtn.addEventListener("click", () => triggerExport("xlsx"));
   els.exportPdfBtn.addEventListener("click", () => triggerExport("pdf"));
 
+  els.resultsSectionSwitch.querySelectorAll(".section-switch-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      currentResultsSection = btn.dataset.section;
+      refreshResultsView();
+    });
+  });
+
   function renderLastScan(results) {
+    const status = results.scan.status;
     els.lastScanUrl.textContent = results.scan.target_url;
     els.lastScanIp.textContent = results.scan.target_ip;
     els.lastScanSiteType.textContent = results.scan.site_type;
     els.lastScanDate.textContent = results.scan.completed_at || results.scan.started_at || "—";
-    els.lastScanPages.textContent = results.scan.pages_crawled ?? "—";
-    els.lastScanLinks.textContent = results.scan.total_links_checked ?? "—";
-    renderCategoryBadges(els.lastScanCounts, results.summary);
+    els.lastScanPages.textContent = status === "completed" ? results.scan.pages_crawled ?? "—" : "—";
+    els.lastScanLinks.textContent = status === "completed" ? results.scan.total_links_checked ?? "—" : "—";
+
+    if (status === "failed") {
+      els.lastScanStatus.textContent = "This scan failed — the numbers above aren't meaningful. Check the target/login and try again.";
+      els.lastScanStatus.className = "field-hint status-failed";
+      els.lastScanStatus.hidden = false;
+    } else if (status === "running") {
+      els.lastScanStatus.textContent = "This scan is still running.";
+      els.lastScanStatus.className = "field-hint status-running";
+      els.lastScanStatus.hidden = false;
+    } else {
+      els.lastScanStatus.hidden = true;
+    }
+
+    renderCategoryBadges(els.lastScanCounts, status === "completed" ? results.summary : {});
     els.lastScanSection.hidden = false;
   }
 
@@ -492,9 +590,15 @@ function initApp() {
       if (!resp.ok) return; // 404 = no scans yet, leave the section hidden
       const data = await resp.json();
       renderLastScan(data);
-      // Also populate the full results table + export buttons on load,
-      // so a returning user can export the last scan without re-running it.
-      renderResults(data);
+      // Also populate the full results table + export buttons on load, so
+      // a returning user can export the last scan without re-running it —
+      // but only for a scan that actually completed. A failed/running
+      // scan has no real findings/pages/links yet (those are only written
+      // after crawl_site() returns successfully), so rendering it here
+      // would misleadingly look like a clean, empty, completed scan.
+      if (data.scan.status === "completed") {
+        renderResults(data);
+      }
     } catch (e) {
       // Backend not reachable yet — last-scan panel just stays hidden.
     }
