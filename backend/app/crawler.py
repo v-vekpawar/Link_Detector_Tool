@@ -30,6 +30,22 @@ from app.extractor import extract_link_elements
 ANCHOR_LIKE_TAGS = ("a", "area")
 
 
+def _is_navigable(element) -> bool:
+    """
+    True if this element represents an in-page navigation link worth
+    following during the crawl, as opposed to a resource reference (img
+    src, script src, link href, form action) that only gets a
+    broken-link check, never crawled into.
+
+    Real anchors/areas are navigable by tag, as before. Elements whose
+    only link came from extractor.py's onclick heuristic (e.g. a <span
+    onclick="location.href='/services'">) are navigable too, regardless
+    of what tag they're written on — that's the whole point of
+    extracting them.
+    """
+    return element.tag in ANCHOR_LIKE_TAGS or element.attribute == "onclick"
+
+
 def _normalize_url(url: str) -> str:
     """Strip the fragment so '#'-variants of the same page dedup to one entry."""
     parsed = urlparse(url)
@@ -119,7 +135,7 @@ def crawl_site(
                 finding = dict(finding, found_on_page=page_url)
                 all_findings.append(finding)
 
-            if element.tag not in ANCHOR_LIKE_TAGS:
+            if not _is_navigable(element):
                 continue
             if is_inactive_href(element.raw_value):
                 continue

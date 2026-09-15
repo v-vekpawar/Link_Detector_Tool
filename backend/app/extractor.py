@@ -4,8 +4,20 @@ HTML link extraction for the Tier 1 (static) engine.
 Pulls every link-bearing attribute out of a page's HTML, resolves it to an
 absolute URL against the page's own URL, and records enough context
 (raw HTML snippet, rough CSS location) to put in a findings row later.
+
+Also does a best-effort heuristic scan of `onclick` attributes for
+JS-driven navigation (e.g. `<span onclick="window.location.href='/x'">`,
+`<li onclick="go('/x')">`). These elements have no href/src attribute at
+all — there's nothing else in the DOM to read — so they'd otherwise be
+completely invisible to a plain attribute scan. This is regex-based
+pattern matching against the JS text, not real JS execution, so it will
+miss anything that doesn't match one of the known call shapes (URLs
+built dynamically, handlers attached only via addEventListener with no
+inline attribute, etc.) — flagging that as a known limitation, not a
+silent gap.
 """
 
+import re
 from dataclasses import dataclass
 from typing import List
 from urllib.parse import urljoin
@@ -22,6 +34,22 @@ LINK_BEARING_ATTRS = [
     ("img", "src"),
     ("script", "src"),
     ("link", "href"),
+]
+
+# Heuristic patterns for pulling a navigation URL out of inline JS in an
+# `onclick` attribute. Tried in order, first match wins per element.
+#   1. location(.href)? = '...'          e.g. window.location.href='/services'
+#   2. location.assign('...') / .replace('...')
+#   3. window.open('...')
+#   4. a bare function call whose argument is a path, e.g. go('/about')
+# (4) is intentionally the widest net — it exists to catch site-specific
+# helper functions like the `go('/path')` idiom — so it's kept last and
+# only matches args that already look like a path (start with '/').
+ONCLICK_URL_PATTERNS = [
+    re.compile(r"location(?:\.href)?\s*=\s*['\"]([^'\"]+)['\"]"),
+    re.compile(r"location\.(?:assign|replace)\(\s*['\"]([^'\"]+)['\"]"),
+    re.compile(r"window\.open\(\s*['\"]([^'\"]+)['\"]"),
+    re.compile(r"\(\s*['\"](/[^'\"]*)['\"]\s*\)"),
 ]
 
 
@@ -53,6 +81,16 @@ def _build_css_path(tag: Tag) -> str:
     return " > ".join(reversed(parts))
 
 
+def _extract_onclick_url(onclick_value: str) -> str:
+    """Returns the first URL-looking match from an onclick attribute's JS
+    text via ONCLICK_URL_PATTERNS, or None if nothing matched."""
+    for pattern in ONCLICK_URL_PATTERNS:
+        match = pattern.search(onclick_value)
+        if match:
+            return match.group(1).strip()
+    return None
+
+
 def extract_link_elements(html: str, page_url: str) -> List[LinkElement]:
     """
     Parses `html` (as fetched from `page_url`) and returns every link-bearing
@@ -60,9 +98,15 @@ def extract_link_elements(html: str, page_url: str) -> List[LinkElement]:
 
     Excludes mailto:/tel:/javascript: targets (not web navigation links,
     per BUILD_PLAN.md #5) and empty/missing attribute values.
+
+    In addition to the fixed href/src/action attributes above, also scans
+    every element's `onclick` attribute (regardless of tag) for JS-driven
+    navigation — see ONCLICK_URL_PATTERNS. These are reported with
+    attribute="onclick" so they're distinguishable from a literal href.
     """
     soup = BeautifulSoup(html, "lxml")
     elements: List[LinkElement] = []
+    seen_onclick_tags = set()
 
     for tag_name, attr_name in LINK_BEARING_ATTRS:
         for tag in soup.find_all(tag_name):
@@ -89,5 +133,32 @@ def extract_link_elements(html: str, page_url: str) -> List[LinkElement]:
                     element_location=_build_css_path(tag),
                 )
             )
+
+    for tag in soup.find_all(attrs={"onclick": True}):
+        onclick_value = (tag.get("onclick") or "").strip()
+        if not onclick_value:
+            continue
+
+        raw_value = _extract_onclick_url(onclick_value)
+        if raw_value is None:
+            continue
+        if any(raw_value.lower().startswith(scheme) for scheme in EXCLUDED_SCHEMES):
+            continue
+        if id(tag) in seen_onclick_tags:
+            continue
+        seen_onclick_tags.add(id(tag))
+
+        absolute_url = urljoin(page_url, raw_value)
+
+        elements.append(
+            LinkElement(
+                tag=tag.name,
+                attribute="onclick",
+                raw_value=raw_value,
+                absolute_url=absolute_url,
+                code_snippet=str(tag)[:300],
+                element_location=_build_css_path(tag),
+            )
+        )
 
     return elements

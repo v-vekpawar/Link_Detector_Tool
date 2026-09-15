@@ -253,7 +253,10 @@ def _run_scan_worker(scan_id: int, target_url: str, site_type: str, reference_ip
                         )
                         if not logged_in:
                             raise RuntimeError(
-                                "Could not find a password field on the login page — auto-login failed."
+                                "Auto-login failed — either no password field was found on the "
+                                "login page, or the login was submitted but doesn't look like it "
+                                "actually authenticated (still on the login page with a password "
+                                "field present, and no session cookie was set)."
                             )
                         session.cookies.update(dyn_session.cookies_for_requests())
                         login_used = "auto"

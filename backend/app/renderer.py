@@ -31,6 +31,14 @@ class DynamicSession:
     automatically — Playwright's BrowserContext carries cookies across
     navigations within itself.
 
+    A single Page is created once in start() and reused for every
+    navigation (login + every render() call) — pages are only opened and
+    closed once per scan, not once per URL. Opening/closing a page per
+    call was the cause of the browser window visibly closing and
+    reopening on every single page of a crawl in headed (non-headless)
+    mode: with only one page ever open, closing it after each call closed
+    the whole OS window, and the next call had to spawn a new one.
+
     Usage:
         with DynamicSession() as dyn:
             dyn.auto_login(login_url, username, password)
@@ -42,14 +50,18 @@ class DynamicSession:
         self._playwright = None
         self._browser = None
         self._context = None
+        self._page = None
 
     def start(self) -> "DynamicSession":
         self._playwright = sync_playwright().start()
         self._browser = self._playwright.chromium.launch(headless=False)
         self._context = self._browser.new_context(ignore_https_errors=True)
+        self._page = self._context.new_page()
         return self
 
     def close(self) -> None:
+        if self._page:
+            self._page.close()
         if self._context:
             self._context.close()
         if self._browser:
@@ -65,25 +77,40 @@ class DynamicSession:
 
     def render(self, url: str) -> Tuple[Optional[str], bool]:
         """
-        Loads `url` in the shared context (cookies from login carry over
+        Loads `url` in the shared page (cookies from login carry over
         automatically) and returns (html, success). html is None and
         success is False if navigation failed outright (matches the
         (html, success) shape crawler.py's page_html_fetcher expects).
         """
-        page = self._context.new_page()
         try:
-            page.goto(url, timeout=RENDER_TIMEOUT_MS, wait_until="load")
+            self._page.goto(url, timeout=RENDER_TIMEOUT_MS, wait_until="load")
             try:
-                page.wait_for_load_state("networkidle", timeout=RENDER_TIMEOUT_MS)
+                self._page.wait_for_load_state("networkidle", timeout=RENDER_TIMEOUT_MS)
             except PlaywrightTimeoutError:
                 pass  # some pages never go fully idle (polling/websockets) — use what's loaded
-            return page.content(), True
+            return self._page.content(), True
         except PlaywrightTimeoutError:
             return None, False
         except Exception:
             return None, False
-        finally:
-            page.close()
+
+    def _login_succeeded(self, login_url: str) -> bool:
+        """
+        Best-effort check that a login attempt actually authenticated us,
+        instead of just trusting that a password field existed and got
+        submitted. True if any of:
+          - the page navigated away from the login URL, or
+          - the password field is no longer present (form replaced/gone), or
+          - the context picked up at least one cookie during the attempt
+            (covers session-cookie-based auth where the URL/form might not
+            visibly change right away).
+        False means the attempt should be treated as failed rather than
+        letting the crawl proceed on an unauthenticated session.
+        """
+        navigated_away = self._page.url.rstrip("/") != login_url.rstrip("/")
+        password_gone = self._page.query_selector('input[type="password"]') is None
+        has_cookies = len(self._context.cookies()) > 0
+        return navigated_away or password_gone or has_cookies
 
     def cookies_for_requests(self) -> dict:
         """
@@ -97,40 +124,41 @@ class DynamicSession:
         """
         Loads the login page, finds the first password-type input, finds a
         username/email-like input in the same form, fills both, and submits.
-        Returns True if a password field was found and login was attempted,
-        False if no password field could be located at all.
+        Returns True only if a password field was found AND the submit
+        appears to have actually authenticated us (see _login_succeeded) —
+        not just that a submit was attempted. Returning True on a submit
+        that silently didn't take was letting the crawl start on an
+        unauthenticated session with nothing downstream able to detect or
+        recover from it.
         """
-        page = self._context.new_page()
+        page = self._page
+        page.goto(login_url, timeout=RENDER_TIMEOUT_MS, wait_until="load")
+
+        password_el = page.query_selector('input[type="password"]')
+        if password_el is None:
+            return False
+
+        form_handle = password_el.evaluate_handle("el => el.closest('form')")
+        form_el = form_handle.as_element()
+
+        username_selector = 'input[type="text"], input[type="email"], input:not([type])'
+        username_el = (form_el or page).query_selector(username_selector)
+
+        if username_el is not None:
+            username_el.fill(username)
+        password_el.fill(password)
+
+        if form_el is not None:
+            form_el.evaluate("form => form.requestSubmit ? form.requestSubmit() : form.submit()")
+        else:
+            password_el.press("Enter")
+
         try:
-            page.goto(login_url, timeout=RENDER_TIMEOUT_MS, wait_until="load")
+            page.wait_for_load_state("networkidle", timeout=RENDER_TIMEOUT_MS)
+        except PlaywrightTimeoutError:
+            pass
 
-            password_el = page.query_selector('input[type="password"]')
-            if password_el is None:
-                return False
-
-            form_handle = password_el.evaluate_handle("el => el.closest('form')")
-            form_el = form_handle.as_element()
-
-            username_selector = 'input[type="text"], input[type="email"], input:not([type])'
-            username_el = (form_el or page).query_selector(username_selector)
-
-            if username_el is not None:
-                username_el.fill(username)
-            password_el.fill(password)
-
-            if form_el is not None:
-                form_el.evaluate("form => form.requestSubmit ? form.requestSubmit() : form.submit()")
-            else:
-                password_el.press("Enter")
-
-            try:
-                page.wait_for_load_state("networkidle", timeout=RENDER_TIMEOUT_MS)
-            except PlaywrightTimeoutError:
-                pass
-
-            return True
-        finally:
-            page.close()
+        return self._login_succeeded(login_url)
 
     def replay_login(
         self,
@@ -148,11 +176,13 @@ class DynamicSession:
         (html, success) return shape.
 
         Returns (None, False) if the target's markup has drifted enough
-        since recording that a step's selector no longer resolves —
-        that's a real "this recording no longer works" signal the caller
-        should surface, not silently swallow.
+        since recording that a step's selector no longer resolves, or if
+        the replay completed but doesn't look like it actually
+        authenticated us (see _login_succeeded) — both are a real "this
+        recording no longer works" signal the caller should surface, not
+        silently swallow.
         """
-        page = self._context.new_page()
+        page = self._page
         try:
             page.goto(start_url, timeout=RENDER_TIMEOUT_MS, wait_until="load")
             replay_login_steps(page, recorded_steps, username=username, password=password)
@@ -160,8 +190,8 @@ class DynamicSession:
                 page.wait_for_load_state("networkidle", timeout=RENDER_TIMEOUT_MS)
             except PlaywrightTimeoutError:
                 pass
+            if not self._login_succeeded(start_url):
+                return None, False
             return page.content(), True
         except (ReplayError, PlaywrightTimeoutError):
             return None, False
-        finally:
-            page.close()
