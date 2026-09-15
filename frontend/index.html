@@ -120,7 +120,12 @@
   <section id="results-section" class="results-section" hidden>
     <h2 class="section-label">Results</h2>
 
-    <ul id="results-counts" class="badge-row"></ul>
+    <ul id="result-tabs" class="tab-row">
+      <li><button type="button" class="tab-badge" id="tab-links" data-tab="links">Links (<span id="tab-links-count">0</span>)</button></li>
+      <li><button type="button" class="tab-badge" id="tab-commented" data-tab="commented">Commented Code (<span id="tab-commented-count">0</span>)</button></li>
+    </ul>
+
+    <div id="category-filters" class="badge-row"></div>
     <p id="results-meta" class="field-hint"></p>
 
     <div class="table-scroll">

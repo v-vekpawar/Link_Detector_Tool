@@ -28,6 +28,13 @@
   --internet: #146a5b;
   --internet-soft: #e0efeb;
 
+  --html-comment: #55606b;
+  --html-comment-soft: #e7eaed;
+  --css-comment: #3d5a80;
+  --css-comment-soft: #e5edf5;
+  --js-comment: #92400e;
+  --js-comment-soft: #fbe8d3;
+
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
 
@@ -284,6 +291,67 @@ input:focus-visible {
 .badge-inactive { background: var(--warning-soft); color: var(--warning); }
 .badge-ip_based { background: var(--ip-based-soft); color: var(--ip-based); }
 .badge-internet { background: var(--internet-soft); color: var(--internet); }
+.badge-html_comment { background: var(--html-comment-soft); color: var(--html-comment); }
+.badge-css_comment { background: var(--css-comment-soft); color: var(--css-comment); }
+.badge-js_comment { background: var(--js-comment-soft); color: var(--js-comment); }
+
+/* --- Result tabs (Links / Commented Code) --- */
+
+.tab-row {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: flex;
+  gap: 8px;
+}
+
+.tab-badge {
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.tab-badge:hover {
+  border-color: var(--accent);
+}
+
+.tab-badge.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* --- Category filter badges (clickable, within the active tab) --- */
+
+.badge-filter {
+  font: inherit;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.badge-filter:hover {
+  border-color: currentColor;
+}
+
+.badge-filter.active {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+}
+
+.badge-filter.zero {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.badge-filter.zero:hover {
+  border-color: transparent;
+}
 
 .table-scroll {
   overflow-x: auto;

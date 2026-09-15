@@ -16,6 +16,14 @@ const CATEGORY_LABELS = {
 
 const CATEGORY_ORDER = ["broken", "inactive", "ip_based", "internet"];
 
+const COMMENT_CATEGORY_LABELS = {
+  html_comment: "HTML Comment",
+  css_comment: "CSS Comment",
+  js_comment: "JS Comment",
+};
+
+const COMMENT_CATEGORY_ORDER = ["html_comment", "css_comment", "js_comment"];
+
 /** Matches a literal IPv4 host (e.g. "10.0.0.1"), same rule as config.py's is_literal_ip for dotted-quad hosts. */
 function isLiteralIPv4(host) {
   if (typeof host !== "string") return false;
@@ -75,15 +83,15 @@ function buildScanPayload(state) {
   return { payload };
 }
 
-/** Splits a possibly comma-separated category string ("internet,broken") into an ordered, deduped list. */
-function parseCategories(categoryString) {
+/** Splits a possibly comma-separated category string ("internet,broken") into an ordered, deduped list. `order` defaults to the Links category order; pass COMMENT_CATEGORY_ORDER for Commented Code rows. */
+function parseCategories(categoryString, order = CATEGORY_ORDER) {
   const present = new Set(
     (categoryString || "")
       .split(",")
       .map((c) => c.trim())
       .filter(Boolean)
   );
-  return CATEGORY_ORDER.filter((c) => present.has(c));
+  return order.filter((c) => present.has(c));
 }
 
 function formatDuration(totalSeconds) {
@@ -133,6 +141,8 @@ const logic = {
   formatProgressLine,
   CATEGORY_LABELS,
   CATEGORY_ORDER,
+  COMMENT_CATEGORY_LABELS,
+  COMMENT_CATEGORY_ORDER,
 };
 
 if (typeof module !== "undefined" && module.exports) {
@@ -179,7 +189,11 @@ function initApp() {
     progressLine: document.getElementById("progress-line"),
 
     resultsSection: document.getElementById("results-section"),
-    resultsCounts: document.getElementById("results-counts"),
+    tabLinks: document.getElementById("tab-links"),
+    tabCommented: document.getElementById("tab-commented"),
+    tabLinksCount: document.getElementById("tab-links-count"),
+    tabCommentedCount: document.getElementById("tab-commented-count"),
+    categoryFilters: document.getElementById("category-filters"),
     resultsMeta: document.getElementById("results-meta"),
     resultsTbody: document.getElementById("results-tbody"),
     resultsEmpty: document.getElementById("results-empty"),
@@ -191,6 +205,16 @@ function initApp() {
   let activeRecordSessionId = null;
   let activeEventSource = null;
   let currentScanId = null;
+
+  // Results-section tab/filter state. currentResults holds the full
+  // payload from the last /results (or /scan/last) fetch; activeTab picks
+  // which of its two finding lists is showing; activeCategory (if set)
+  // further filters that list down to one category. Switching tabs always
+  // clears the category filter — a category from one tab's set wouldn't
+  // mean anything in the other.
+  let currentResults = null;
+  let activeTab = "links";
+  let activeCategory = null;
 
   function showFormError(message) {
     els.formError.textContent = message;
@@ -335,7 +359,35 @@ function initApp() {
     });
   }
 
-  function renderResultsTable(findings) {
+  /**
+   * Renders the clickable category-filter badge row for the currently
+   * active tab. `order`/`labels` are the Links or Commented Code sets;
+   * `findings` is that tab's full (unfiltered) list, used to compute each
+   * badge's count. Clicking a badge sets it as the active filter; clicking
+   * the already-active one clears the filter back to "show everything in
+   * this tab". A badge with a zero count is shown but not clickable —
+   * nothing to filter to.
+   */
+  function renderCategoryFilterBadges(order, labels, findings) {
+    els.categoryFilters.innerHTML = "";
+    order.forEach((cat) => {
+      const count = findings.filter((f) => logic.parseCategories(f.category, order).includes(cat)).length;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `badge badge-filter badge-${cat}`;
+      if (count === 0) btn.classList.add("zero");
+      if (activeCategory === cat) btn.classList.add("active");
+      btn.textContent = `${labels[cat]} (${count})`;
+      btn.disabled = count === 0;
+      btn.addEventListener("click", () => {
+        activeCategory = activeCategory === cat ? null : cat;
+        renderActiveTab();
+      });
+      els.categoryFilters.appendChild(btn);
+    });
+  }
+
+  function renderResultsTable(findings, order) {
     els.resultsTbody.innerHTML = "";
     els.resultsEmpty.hidden = findings.length !== 0;
 
@@ -353,10 +405,10 @@ function initApp() {
       tr.appendChild(linkTd);
 
       const categoryTd = document.createElement("td");
-      logic.parseCategories(finding.category).forEach((cat) => {
+      logic.parseCategories(finding.category, order).forEach((cat) => {
         const span = document.createElement("span");
         span.className = `badge badge-${cat}`;
-        span.textContent = logic.CATEGORY_LABELS[cat];
+        span.textContent = (logic.CATEGORY_LABELS[cat] || logic.COMMENT_CATEGORY_LABELS[cat]);
         span.style.marginRight = "4px";
         categoryTd.appendChild(span);
       });
@@ -380,12 +432,54 @@ function initApp() {
     });
   }
 
+  /**
+   * Redraws everything below the tab row for the current activeTab/
+   * activeCategory state, without re-fetching anything. Called on load,
+   * on tab switch, and on category-filter click.
+   */
+  function renderActiveTab() {
+    if (!currentResults) return;
+
+    const isLinks = activeTab === "links";
+    const order = isLinks ? logic.CATEGORY_ORDER : logic.COMMENT_CATEGORY_ORDER;
+    const labels = isLinks ? logic.CATEGORY_LABELS : logic.COMMENT_CATEGORY_LABELS;
+    const tabFindings = isLinks ? currentResults.findings : currentResults.commented_findings;
+
+    els.tabLinks.classList.toggle("active", isLinks);
+    els.tabCommented.classList.toggle("active", !isLinks);
+    els.tabLinksCount.textContent = currentResults.findings.length;
+    els.tabCommentedCount.textContent = currentResults.commented_findings.length;
+
+    renderCategoryFilterBadges(order, labels, tabFindings);
+
+    const shown = activeCategory
+      ? tabFindings.filter((f) => logic.parseCategories(f.category, order).includes(activeCategory))
+      : tabFindings;
+
+    renderResultsTable(shown, order);
+
+    const tabLabel = isLinks ? "Links" : "Commented Code";
+    els.resultsMeta.textContent = activeCategory
+      ? `${tabLabel} — ${labels[activeCategory]}: ${shown.length} of ${tabFindings.length} shown.`
+      : `${tabLabel}: ${tabFindings.length} shown. ${currentResults.scan.pages_crawled} pages crawled, ${currentResults.scan.total_links_checked} links checked.`;
+  }
+
+  function setActiveTab(tab) {
+    if (activeTab === tab) return;
+    activeTab = tab;
+    activeCategory = null;
+    renderActiveTab();
+  }
+
+  els.tabLinks.addEventListener("click", () => setActiveTab("links"));
+  els.tabCommented.addEventListener("click", () => setActiveTab("commented"));
+
   function renderResults(results) {
     currentScanId = results.scan.id;
-    renderCategoryBadges(els.resultsCounts, results.summary);
-    els.resultsMeta.textContent =
-      `${results.scan.pages_crawled} pages crawled, ${results.scan.total_links_checked} links checked.`;
-    renderResultsTable(results.findings);
+    currentResults = results;
+    activeTab = "links";
+    activeCategory = null;
+    renderActiveTab();
     els.resultsSection.hidden = false;
   }
 

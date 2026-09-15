@@ -107,6 +107,8 @@ class LoginConfigResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 FINDING_CATEGORY_KEYS = ("broken", "inactive", "ip_based", "internet")
+COMMENT_CATEGORY_KEYS = ("html_comment", "css_comment", "js_comment")
+ALL_CATEGORY_KEYS = FINDING_CATEGORY_KEYS + COMMENT_CATEGORY_KEYS
 
 
 def _row_to_scan_dict(row) -> dict:
@@ -126,7 +128,7 @@ def _row_to_scan_dict(row) -> dict:
 
 
 def _summarize(findings: list) -> dict:
-    summary = {key: 0 for key in FINDING_CATEGORY_KEYS}
+    summary = {key: 0 for key in ALL_CATEGORY_KEYS}
     for finding in findings:
         for category in finding["category"].split(","):
             if category in summary:
@@ -135,6 +137,17 @@ def _summarize(findings: list) -> dict:
 
 
 def _build_results_payload(scan_id: int):
+    """
+    Findings are split into two result-section buckets here, at the API
+    layer, rather than in the frontend: "findings" (the Links tab — every
+    live, status-checked finding: broken/inactive/ip_based/internet) and
+    "commented_findings" (the Commented Code tab — html_comment/
+    css_comment/js_comment entries from comment_scanner.py: informational
+    only, no status check, never crawled into). Same underlying findings
+    table/rows either way — this is just how the payload groups them for
+    display, and lets the frontend offer per-category filtering within
+    each tab independently.
+    """
     conn = get_connection()
     try:
         scan_row = conn.execute("SELECT * FROM scans WHERE id = ?", (scan_id,)).fetchone()
@@ -148,11 +161,19 @@ def _build_results_payload(scan_id: int):
     finally:
         conn.close()
 
-    findings = [dict(row) for row in finding_rows]
+    all_findings = [dict(row) for row in finding_rows]
+    commented_findings = [
+        f for f in all_findings if any(c in COMMENT_CATEGORY_KEYS for c in f["category"].split(","))
+    ]
+    findings = [
+        f for f in all_findings if not any(c in COMMENT_CATEGORY_KEYS for c in f["category"].split(","))
+    ]
+
     return {
         "scan": _row_to_scan_dict(scan_row),
-        "summary": _summarize(findings),
+        "summary": _summarize(all_findings),
         "findings": findings,
+        "commented_findings": commented_findings,
     }
 
 
@@ -469,10 +490,15 @@ def export_scan(scan_id: int, format: str):
     if payload is None:
         raise HTTPException(status_code=404, detail="Scan not found.")
 
+    # Exports include both buckets (Links + Commented Code) — the tab
+    # split in the API/UI shouldn't mean commented findings quietly never
+    # make it into a downloaded report.
+    export_findings = payload["findings"] + payload["commented_findings"]
+
     if format == "xlsx":
-        file_bytes = build_xlsx_bytes(payload["scan"], payload["findings"])
+        file_bytes = build_xlsx_bytes(payload["scan"], export_findings)
     else:
-        file_bytes = build_pdf_bytes(payload["scan"], payload["findings"])
+        file_bytes = build_pdf_bytes(payload["scan"], export_findings)
 
     filename = f"scan_{scan_id}_findings.{format}"
     return Response(

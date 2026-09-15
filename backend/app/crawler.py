@@ -15,6 +15,17 @@ Design notes (flagging as decisions, not silent defaults):
 - The visited/queued set is keyed on the URL with its fragment stripped, so
   "page.html", "page.html#section1", and "page.html#other" all count as the
   same page for crawl purposes.
+- Every page also gets comment-scanned (HTML comments, plus JS/CSS
+  comments inside its own <style>/<script> blocks) via comment_scanner.py.
+  Those go into `findings` too, tagged category="commented" — they're
+  informational (no status check, never enqueued for crawling), so the
+  API layer (main.py) splits them out into a separate "Commented Code"
+  bucket rather than mixing them into the live Links results.
+- Any external .css/.js file referenced from a page (same-host only, like
+  everything else this crawler follows) gets fetched once per scan and
+  comment-scanned too — comment scanning is the one thing that reaches
+  into external files; live link extraction deliberately does not
+  (see extractor.py's module docstring).
 """
 
 from collections import deque
@@ -26,8 +37,13 @@ import requests
 from app.config import MAX_PAGES_PER_SCAN, classify_host, is_inactive_href
 from app.classifier import classify_link
 from app.extractor import extract_link_elements
+from app.comment_scanner import extract_page_comment_findings, fetch_and_scan_external_asset
 
 ANCHOR_LIKE_TAGS = ("a", "area")
+
+# Extractor tags used for elements that came from embedded/inline CSS or
+# JS rather than a literal href/src attribute — see extractor.py.
+JS_URL_ATTRIBUTES = ("css-url", "js-url")
 
 
 def _is_navigable(element) -> bool:
@@ -38,15 +54,58 @@ def _is_navigable(element) -> bool:
     broken-link check, never crawled into.
 
     Real anchors/areas are navigable by tag, as before. Elements whose
-    only link came from extractor.py's onclick heuristic (e.g. a <span
-    onclick="location.href='/services'">) are navigable too, regardless
-    of what tag they're written on — that's the whole point of
-    extracting them.
+    only link came from extractor.py's heuristics — an inline event
+    handler (onclick, onload, ...), an internal/inline CSS url(...), or
+    an internal <script> block — are navigable too, regardless of what
+    tag they're written on. Per spec, these count as full citizens: they
+    get status-checked (like any other link) and followed into if they
+    resolve to a same-host page.
     """
-    return element.tag in ANCHOR_LIKE_TAGS or element.attribute == "onclick"
+    if element.tag in ANCHOR_LIKE_TAGS:
+        return True
+    if element.attribute.startswith("on"):
+        return True
+    if element.attribute in JS_URL_ATTRIBUTES:
+        return True
+    return False
+
+
+def _external_asset_url(element) -> Optional[str]:
+    """
+    If `element` is a reference to an external .css/.js file (a <link
+    href> stylesheet or a <script src>), returns its absolute URL so the
+    caller can fetch it and comment-scan its contents. Returns None for
+    everything else (page navigation links, images, forms, ...) — those
+    aren't assets whose *text* we'd scan.
+    """
+    if element.tag == "link" and element.attribute == "href":
+        return element.absolute_url
+    if element.tag == "script" and element.attribute == "src":
+        return element.absolute_url
+    return None
+
+
+def _comment_finding_dict(cf) -> Dict:
+    """
+    Shapes a comment_scanner.CommentFinding as a findings-table row.
+    category is "<html|css|js>_comment" (not a flat "commented") so the
+    frontend can offer per-comment-type filtering within the Commented
+    Code tab, the same way it filters Links by broken/inactive/etc.
+    """
+    return {
+        "found_on_page": cf.source_url,
+        "link": cf.absolute_url,
+        "category": f"{cf.comment_type}_comment",
+        "code_snippet": cf.code_snippet,
+        "evidence": f"found in {cf.comment_type} comment (raw: {cf.raw_value})",
+        "element_location": cf.element_location,
+    }
 
 
 def _normalize_url(url: str) -> str:
+    """Strip the fragment so '#'-variants of the same page dedup to one entry."""
+    parsed = urlparse(url)
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, parsed.query, ""))
     """Strip the fragment so '#'-variants of the same page dedup to one entry."""
     parsed = urlparse(url)
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, parsed.query, ""))
@@ -66,8 +125,13 @@ def crawl_site(
         {
             "pages_crawled": int,
             "total_links_checked": int,
+            "total_commented_found": int,
             "findings": [ {found_on_page, link, category, code_snippet,
                             evidence, element_location}, ... ],
+                          # category="commented" entries are informational
+                          # (comment_scanner.py) and mixed into this same
+                          # list; main.py splits them into a separate
+                          # "Commented Code" bucket for the API response.
             "visited_pages": [str, ...]   # normalized URLs, for inspection/tests
         }
 
@@ -91,9 +155,11 @@ def crawl_site(
     visited_pages = set()
     queue = deque([start_url])
     queued_normalized = {_normalize_url(start_url)}
+    scanned_assets = set()  # dedupe: fetch+scan each external .css/.js file once per scan
 
     all_findings: List[Dict] = []
     total_links_checked = 0
+    total_commented_found = 0
     pages_crawled = 0
 
     while queue and pages_crawled < max_pages:
@@ -135,6 +201,16 @@ def crawl_site(
                 finding = dict(finding, found_on_page=page_url)
                 all_findings.append(finding)
 
+            asset_url = _external_asset_url(element)
+            if asset_url is not None:
+                asset_normalized = _normalize_url(asset_url)
+                asset_host = urlparse(asset_url).hostname or ""
+                if asset_normalized not in scanned_assets and classify_host(asset_host, reference_ip) == "same":
+                    scanned_assets.add(asset_normalized)
+                    for cf in fetch_and_scan_external_asset(asset_url, session=sess):
+                        total_commented_found += 1
+                        all_findings.append(_comment_finding_dict(cf))
+
             if not _is_navigable(element):
                 continue
             if is_inactive_href(element.raw_value):
@@ -152,6 +228,10 @@ def crawl_site(
             queued_normalized.add(target_normalized)
             queue.append(element.absolute_url)
 
+        for cf in extract_page_comment_findings(html, page_url):
+            total_commented_found += 1
+            all_findings.append(_comment_finding_dict(cf))
+
         if progress_callback:
             progress_callback(
                 pages_crawled=pages_crawled,
@@ -162,6 +242,7 @@ def crawl_site(
     return {
         "pages_crawled": pages_crawled,
         "total_links_checked": total_links_checked,
+        "total_commented_found": total_commented_found,
         "findings": all_findings,
         "visited_pages": sorted(visited_pages),
     }
