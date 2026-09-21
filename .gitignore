@@ -55,3 +55,10 @@ Thumbs.db
 frontend/tests/
 frontend/package.json
 frontend/package-lock.json
+.kiro/
+bundle_linux/
+bundle_windows/
+*.iso
+temp_dl_env/
+temp_pw_env/
+temp_pw_win/

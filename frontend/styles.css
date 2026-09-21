@@ -28,12 +28,27 @@
   --internet: #146a5b;
   --internet-soft: #e0efeb;
 
-  --html-comment: #55606b;
-  --html-comment-soft: #e7eaed;
-  --css-comment: #3d5a80;
-  --css-comment-soft: #e5edf5;
-  --js-comment: #92400e;
-  --js-comment-soft: #fbe8d3;
+  --comment-link: #3949ab;
+  --comment-link-soft: #e3e5f7;
+  --internal-css: #1565c0;
+  --internal-css-soft: #dceefb;
+  --inline-css: #00838f;
+  --inline-css-soft: #d9f0f2;
+  --external-css: #0d3b66;
+  --external-css-soft: #dbe6f0;
+  --internal-js: #b7791f;
+  --internal-js-soft: #faedd2;
+  --inline-js: #c1440e;
+  --inline-js-soft: #fbe1d3;
+  --external-js: #7a3300;
+  --external-js-soft: #f0dfc9;
+
+  --severity-high: #a3291f;
+  --severity-high-soft: #f6e4e2;
+  --severity-medium: #8a5a00;
+  --severity-medium-soft: #f6ecd9;
+  --severity-low: #4d5a52;
+  --severity-low-soft: #e6ebe6;
 
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
@@ -291,9 +306,17 @@ input:focus-visible {
 .badge-inactive { background: var(--warning-soft); color: var(--warning); }
 .badge-ip_based { background: var(--ip-based-soft); color: var(--ip-based); }
 .badge-internet { background: var(--internet-soft); color: var(--internet); }
-.badge-html_comment { background: var(--html-comment-soft); color: var(--html-comment); }
-.badge-css_comment { background: var(--css-comment-soft); color: var(--css-comment); }
-.badge-js_comment { background: var(--js-comment-soft); color: var(--js-comment); }
+.badge-commented_link { background: var(--comment-link-soft); color: var(--comment-link); }
+.badge-internal_css { background: var(--internal-css-soft); color: var(--internal-css); }
+.badge-inline_css { background: var(--inline-css-soft); color: var(--inline-css); }
+.badge-external_css { background: var(--external-css-soft); color: var(--external-css); }
+.badge-internal_js { background: var(--internal-js-soft); color: var(--internal-js); }
+.badge-inline_js { background: var(--inline-js-soft); color: var(--inline-js); }
+.badge-external_js { background: var(--external-js-soft); color: var(--external-js); }
+
+.badge-severity-high { background: var(--severity-high-soft); color: var(--severity-high); }
+.badge-severity-medium { background: var(--severity-medium-soft); color: var(--severity-medium); }
+.badge-severity-low { background: var(--severity-low-soft); color: var(--severity-low); }
 
 /* --- Result tabs (Links / Commented Code) --- */
 

@@ -17,12 +17,26 @@ const CATEGORY_LABELS = {
 const CATEGORY_ORDER = ["broken", "inactive", "ip_based", "internet"];
 
 const COMMENT_CATEGORY_LABELS = {
-  html_comment: "HTML Comment",
-  css_comment: "CSS Comment",
-  js_comment: "JS Comment",
+  commented_link: "Commented Link",
+  internal_css: "Internal CSS",
+  inline_css: "Inline CSS",
+  internal_js: "Internal JS",
+  inline_js: "Inline JS",
 };
 
-const COMMENT_CATEGORY_ORDER = ["html_comment", "css_comment", "js_comment"];
+const COMMENT_CATEGORY_ORDER = [
+  "commented_link",
+  "internal_css",
+  "inline_css",
+  "internal_js",
+  "inline_js",
+];
+
+const SEVERITY_LABELS = {
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+};
 
 /** Matches a literal IPv4 host (e.g. "10.0.0.1"), same rule as config.py's is_literal_ip for dotted-quad hosts. */
 function isLiteralIPv4(host) {
@@ -44,7 +58,7 @@ function extractHost(urlString) {
 /**
  * Builds the POST /api/scan/start JSON body from the form's current state.
  * `state` shape:
- *   { targetUrl, siteType, requiresLogin, loginMode, loginUrl, username, password }
+ *   { targetUrl, siteType, requiresLogin, username, password }
  * Returns { payload } on success, or { error } if the state is invalid —
  * caller is responsible for displaying `error` and not submitting.
  */
@@ -68,16 +82,7 @@ function buildScanPayload(state) {
     if (!username || !password) {
       return { error: "Username and password are required when login is enabled." };
     }
-
-    if (state.loginMode === "recorded") {
-      payload.login = { mode: "recorded", username, password };
-    } else {
-      const loginUrl = (state.loginUrl || "").trim();
-      if (!loginUrl) {
-        return { error: "Login page URL is required for auto-fill login." };
-      }
-      payload.login = { mode: "auto", login_url: loginUrl, username, password };
-    }
+    payload.login = { mode: "recorded", username, password };
   }
 
   return { payload };
@@ -143,6 +148,7 @@ const logic = {
   CATEGORY_ORDER,
   COMMENT_CATEGORY_LABELS,
   COMMENT_CATEGORY_ORDER,
+  SEVERITY_LABELS,
 };
 
 if (typeof module !== "undefined" && module.exports) {
@@ -167,14 +173,13 @@ function initApp() {
     lastScanPages: document.getElementById("last-scan-pages"),
     lastScanLinks: document.getElementById("last-scan-links"),
     lastScanCounts: document.getElementById("last-scan-counts"),
+    viewLastResultsBtn: document.getElementById("view-last-results-btn"),
 
     form: document.getElementById("scan-form"),
     targetUrl: document.getElementById("target-url"),
     requiresLogin: document.getElementById("requires-login"),
     loginFields: document.getElementById("login-fields"),
-    loginAutoFields: document.getElementById("login-auto-fields"),
     loginRecordedFields: document.getElementById("login-recorded-fields"),
-    loginUrl: document.getElementById("login-url"),
     loginUsername: document.getElementById("login-username"),
     loginPassword: document.getElementById("login-password"),
     recordedFlowStatus: document.getElementById("recorded-flow-status"),
@@ -231,22 +236,11 @@ function initApp() {
     return checked ? checked.value : "static";
   }
 
-  function currentLoginMode() {
-    const checked = els.form.querySelector('input[name="login_mode"]:checked');
-    return checked ? checked.value : "auto";
-  }
-
   function updateLoginFieldsVisibility() {
     const requiresLogin = els.requiresLogin.checked;
     els.loginFields.hidden = !requiresLogin;
     if (!requiresLogin) return;
-
-    const mode = currentLoginMode();
-    els.loginAutoFields.hidden = mode !== "auto";
-    els.loginRecordedFields.hidden = mode !== "recorded";
-    if (mode === "recorded") {
-      refreshRecordedFlowStatus();
-    }
+    refreshRecordedFlowStatus();
   }
 
   async function refreshRecordedFlowStatus() {
@@ -268,11 +262,8 @@ function initApp() {
   }
 
   els.requiresLogin.addEventListener("change", updateLoginFieldsVisibility);
-  els.form.querySelectorAll('input[name="login_mode"]').forEach((el) => {
-    el.addEventListener("change", updateLoginFieldsVisibility);
-  });
   els.targetUrl.addEventListener("blur", () => {
-    if (els.requiresLogin.checked && currentLoginMode() === "recorded") {
+    if (els.requiresLogin.checked) {
       refreshRecordedFlowStatus();
     }
   });
@@ -341,8 +332,6 @@ function initApp() {
       targetUrl: els.targetUrl.value,
       siteType: currentSiteType(),
       requiresLogin: els.requiresLogin.checked,
-      loginMode: currentLoginMode(),
-      loginUrl: els.loginUrl.value,
       username: els.loginUsername.value,
       password: els.loginPassword.value,
     };
@@ -414,6 +403,15 @@ function initApp() {
       });
       tr.appendChild(categoryTd);
 
+      const severityTd = document.createElement("td");
+      if (finding.severity) {
+        const span = document.createElement("span");
+        span.className = `badge badge-severity-${finding.severity}`;
+        span.textContent = logic.SEVERITY_LABELS[finding.severity] || finding.severity;
+        severityTd.appendChild(span);
+      }
+      tr.appendChild(severityTd);
+
       const snippetTd = document.createElement("td");
       snippetTd.className = "mono";
       snippetTd.textContent = finding.code_snippet || "";
@@ -450,6 +448,31 @@ function initApp() {
     els.tabLinksCount.textContent = currentResults.findings.length;
     els.tabCommentedCount.textContent = currentResults.commented_findings.length;
 
+    const theadRow = document.querySelector("#results-table thead tr");
+    if (theadRow) {
+      if (isLinks) {
+        theadRow.innerHTML = `
+          <th>Found on page</th>
+          <th>Link</th>
+          <th>Category</th>
+          <th>Severity</th>
+          <th>Code snippet</th>
+          <th>Evidence / reason</th>
+          <th>Element location</th>
+        `;
+      } else {
+        theadRow.innerHTML = `
+          <th>Found On Page</th>
+          <th>Extracted Value / Target</th>
+          <th>Finding Type</th>
+          <th>Severity</th>
+          <th>Code Snippet</th>
+          <th>Details</th>
+          <th>DOM Location</th>
+        `;
+      }
+    }
+
     renderCategoryFilterBadges(order, labels, tabFindings);
 
     const shown = activeCategory
@@ -458,7 +481,7 @@ function initApp() {
 
     renderResultsTable(shown, order);
 
-    const tabLabel = isLinks ? "Links" : "Commented Code";
+    const tabLabel = isLinks ? "Links" : "Code Findings";
     els.resultsMeta.textContent = activeCategory
       ? `${tabLabel} — ${labels[activeCategory]}: ${shown.length} of ${tabFindings.length} shown.`
       : `${tabLabel}: ${tabFindings.length} shown. ${currentResults.scan.pages_crawled} pages crawled, ${currentResults.scan.total_links_checked} links checked.`;
@@ -481,6 +504,7 @@ function initApp() {
     activeCategory = null;
     renderActiveTab();
     els.resultsSection.hidden = false;
+    els.viewLastResultsBtn.textContent = "Hide Last Results";
   }
 
   /**
@@ -504,6 +528,20 @@ function initApp() {
   els.exportXlsxBtn.addEventListener("click", () => triggerExport("xlsx"));
   els.exportPdfBtn.addEventListener("click", () => triggerExport("pdf"));
 
+  els.viewLastResultsBtn.addEventListener("click", () => {
+    if (!currentResults) return;
+    const isShowing = !els.resultsSection.hidden;
+    if (isShowing) {
+      // Just hide it back — the table stays fully rendered underneath so
+      // showing it again (or switching tabs) doesn't need a re-render.
+      els.resultsSection.hidden = true;
+      els.viewLastResultsBtn.textContent = "View Last Results";
+      return;
+    }
+    renderResults(currentResults);
+    els.resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
   function renderLastScan(results) {
     els.lastScanUrl.textContent = results.scan.target_url;
     els.lastScanIp.textContent = results.scan.target_ip;
@@ -521,9 +559,14 @@ function initApp() {
       if (!resp.ok) return; // 404 = no scans yet, leave the section hidden
       const data = await resp.json();
       renderLastScan(data);
-      // Also populate the full results table + export buttons on load,
-      // so a returning user can export the last scan without re-running it.
-      renderResults(data);
+      // Cache the data (scan id + full findings) so Export and "View
+      // Last Results" work immediately, without re-running a scan — but
+      // don't expand the full Results table itself. That table should
+      // only appear after a scan the user actually just ran (or after
+      // they explicitly ask to see the last one), not silently on every
+      // page load.
+      currentScanId = data.scan.id;
+      currentResults = data;
     } catch (e) {
       // Backend not reachable yet — last-scan panel just stays hidden.
     }

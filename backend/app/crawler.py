@@ -16,8 +16,10 @@ Design notes (flagging as decisions, not silent defaults):
   "page.html", "page.html#section1", and "page.html#other" all count as the
   same page for crawl purposes.
 - Every page also gets comment-scanned (HTML comments, plus JS/CSS
-  comments inside its own <style>/<script> blocks) via comment_scanner.py.
-  Those go into `findings` too, tagged category="commented" — they're
+  comments inside its own <style>/<script> blocks and inline
+  style=""/on*="" attributes) via comment_scanner.py. Those go into
+  `findings` too, tagged with one of comment_scanner's category
+  constants (commented_link / internal_css_comment / etc.) — they're
   informational (no status check, never enqueued for crawling), so the
   API layer (main.py) splits them out into a separate "Commented Code"
   bucket rather than mixing them into the live Links results.
@@ -88,16 +90,19 @@ def _external_asset_url(element) -> Optional[str]:
 def _comment_finding_dict(cf) -> Dict:
     """
     Shapes a comment_scanner.CommentFinding as a findings-table row.
-    category is "<html|css|js>_comment" (not a flat "commented") so the
-    frontend can offer per-comment-type filtering within the Commented
-    Code tab, the same way it filters Links by broken/inactive/etc.
+    category is already one of comment_scanner's seven category constants
+    (commented_link / internal_css_comment / inline_css_comment /
+    external_css_comment / internal_js_comment / inline_js_comment /
+    external_js_comment), so the frontend can offer per-category
+    filtering within the Commented Code tab, the same way it filters
+    Links by broken/inactive/etc.
     """
     return {
         "found_on_page": cf.source_url,
         "link": cf.absolute_url,
-        "category": f"{cf.comment_type}_comment",
+        "category": cf.category,
         "code_snippet": cf.code_snippet,
-        "evidence": f"found in {cf.comment_type} comment (raw: {cf.raw_value})",
+        "evidence": f"found in {cf.category.replace('_', ' ')} (raw: {cf.raw_value})",
         "element_location": cf.element_location,
     }
 

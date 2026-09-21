@@ -26,6 +26,7 @@
       <div><dt>Links checked</dt><dd id="last-scan-links"></dd></div>
     </dl>
     <ul id="last-scan-counts" class="badge-row"></ul>
+    <button type="button" id="view-last-results-btn" class="btn btn-secondary">View Last Results</button>
   </section>
 
   <form id="scan-form" novalidate>
@@ -34,7 +35,7 @@
       <label for="target-url">Target URL</label>
       <input type="text" id="target-url" name="target_url" class="mono"
              placeholder="https://10.0.0.1" autocomplete="off" required>
-      <p class="field-hint">The one IP being vetted — port 443.</p>
+      <p class="field-hint">The one IP being vetted.</p>
     </div>
 
     <fieldset class="field">
@@ -61,29 +62,7 @@
 
     <div id="login-fields" class="login-fields" hidden>
 
-      <fieldset class="field">
-        <legend>Login method</legend>
-        <div class="radio-row">
-          <label class="radio-option">
-            <input type="radio" name="login_mode" value="auto" checked>
-            <span>Auto-fill</span>
-          </label>
-          <label class="radio-option">
-            <input type="radio" name="login_mode" value="recorded">
-            <span>Recorded flow</span>
-          </label>
-        </div>
-      </fieldset>
-
-      <div id="login-auto-fields">
-        <div class="field">
-          <label for="login-url">Login page URL</label>
-          <input type="text" id="login-url" name="login_url" class="mono"
-                 placeholder="https://10.0.0.1/login" autocomplete="off">
-        </div>
-      </div>
-
-      <div id="login-recorded-fields" hidden>
+      <div id="login-recorded-fields">
         <p id="recorded-flow-status" class="field-hint">Enter a target URL above to check for a recorded flow.</p>
         <button type="button" id="record-flow-btn" class="btn btn-secondary">Record login flow</button>
         <div id="record-flow-panel" class="record-flow-panel" hidden>
@@ -122,7 +101,7 @@
 
     <ul id="result-tabs" class="tab-row">
       <li><button type="button" class="tab-badge" id="tab-links" data-tab="links">Links (<span id="tab-links-count">0</span>)</button></li>
-      <li><button type="button" class="tab-badge" id="tab-commented" data-tab="commented">Commented Code (<span id="tab-commented-count">0</span>)</button></li>
+      <li><button type="button" class="tab-badge" id="tab-commented" data-tab="commented">Code Findings (<span id="tab-commented-count">0</span>)</button></li>
     </ul>
 
     <div id="category-filters" class="badge-row"></div>
@@ -135,6 +114,7 @@
             <th>Found on page</th>
             <th>Link</th>
             <th>Category</th>
+            <th>Severity</th>
             <th>Code snippet</th>
             <th>Evidence / reason</th>
             <th>Element location</th>

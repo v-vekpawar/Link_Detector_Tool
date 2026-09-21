@@ -2,7 +2,7 @@
 Tier 2 (dynamic) engine — Playwright-based rendering and login.
 
 Used only for (per ARCHITECTURE.md):
-  1. Logging in (auto-fill here; replaying a recorded flow is Step 7)
+  1. Logging in (replaying a recorded flow — see replay_login())
   2. Rendering a page fully (JS executed) so links injected client-side are
      present in the DOM before Tier 1's extractor runs against the
      resulting HTML.
@@ -41,7 +41,7 @@ class DynamicSession:
 
     Usage:
         with DynamicSession() as dyn:
-            dyn.auto_login(login_url, username, password)
+            dyn.replay_login(start_url, recorded_steps, username, password)
             html, ok = dyn.render(some_page_url)
             cookies = dyn.cookies_for_requests()  # hand off to a requests.Session
     """
@@ -120,46 +120,6 @@ class DynamicSession:
         """
         return {c["name"]: c["value"] for c in self._context.cookies()}
 
-    def auto_login(self, login_url: str, username: str, password: str) -> bool:
-        """
-        Loads the login page, finds the first password-type input, finds a
-        username/email-like input in the same form, fills both, and submits.
-        Returns True only if a password field was found AND the submit
-        appears to have actually authenticated us (see _login_succeeded) —
-        not just that a submit was attempted. Returning True on a submit
-        that silently didn't take was letting the crawl start on an
-        unauthenticated session with nothing downstream able to detect or
-        recover from it.
-        """
-        page = self._page
-        page.goto(login_url, timeout=RENDER_TIMEOUT_MS, wait_until="load")
-
-        password_el = page.query_selector('input[type="password"]')
-        if password_el is None:
-            return False
-
-        form_handle = password_el.evaluate_handle("el => el.closest('form')")
-        form_el = form_handle.as_element()
-
-        username_selector = 'input[type="text"], input[type="email"], input:not([type])'
-        username_el = (form_el or page).query_selector(username_selector)
-
-        if username_el is not None:
-            username_el.fill(username)
-        password_el.fill(password)
-
-        if form_el is not None:
-            form_el.evaluate("form => form.requestSubmit ? form.requestSubmit() : form.submit()")
-        else:
-            password_el.press("Enter")
-
-        try:
-            page.wait_for_load_state("networkidle", timeout=RENDER_TIMEOUT_MS)
-        except PlaywrightTimeoutError:
-            pass
-
-        return self._login_succeeded(login_url)
-
     def replay_login(
         self,
         start_url: str,
@@ -172,7 +132,7 @@ class DynamicSession:
         login_config_store.py — Step 7) against `start_url` (the URL that
         was open when recording began). The actual step-by-step player
         lives in login_replay.replay_login_steps — this just manages the
-        page lifecycle around it and matches render()/auto_login()'s
+        page lifecycle around it and matches render()'s
         (html, success) return shape.
 
         Returns (None, False) if the target's markup has drifted enough

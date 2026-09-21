@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS scans (
     target_url           TEXT NOT NULL,
     target_ip            TEXT,
     site_type            TEXT NOT NULL CHECK (site_type IN ('static', 'dynamic')),
-    login_used           TEXT NOT NULL DEFAULT 'none' CHECK (login_used IN ('none', 'auto', 'recorded')),
+    login_used           TEXT NOT NULL DEFAULT 'none' CHECK (login_used IN ('none', 'auto', 'recorded')),  -- 'auto' kept here for old scan rows recorded before auto-login was removed; new scans never write it
     started_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at         DATETIME,
     status               TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'completed', 'failed')),
@@ -33,7 +33,7 @@ CREATE INDEX IF NOT EXISTS idx_findings_scan_id ON findings(scan_id);
 CREATE TABLE IF NOT EXISTS login_configs (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     target_ip       TEXT NOT NULL UNIQUE,
-    mode            TEXT NOT NULL CHECK (mode IN ('auto', 'recorded')),
+    mode            TEXT NOT NULL CHECK (mode IN ('recorded')),  -- 'auto' removed; recorded-flow login is the only supported mode now
     login_url       TEXT,
     recorded_steps  TEXT,   -- JSON, used when mode = 'recorded'
     created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

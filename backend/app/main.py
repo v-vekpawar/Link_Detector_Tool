@@ -15,10 +15,11 @@ spins up a Tier 2 DynamicSession (Playwright) for login + JS rendering,
 handing rendered HTML back to the same Tier 1 extractor/crawler.
 
 Login modes for a dynamic scan:
-  - "auto": auto-fills a detected password field + nearby username field.
   - "recorded": replays a previously-recorded click/fill flow (see
     login_recorder.py / login_config_store.py). Requires having already
     recorded one for this target via /api/login/record/start + /save.
+    (Auto-fill login was removed — recorded-flow login is more robust
+    and accurate against real login forms, so it's the only mode now.)
 
 Run from backend/ with the venv active:
     uvicorn app.main:app --reload
@@ -64,7 +65,7 @@ def on_startup():
 # ---------------------------------------------------------------------------
 
 class LoginConfig(BaseModel):
-    mode: str  # "auto" | "recorded"
+    mode: str  # "recorded" — the only login mode (auto-fill login was removed)
     login_url: Optional[str] = None
     username: Optional[str] = None
     password: Optional[str] = None
@@ -107,8 +108,57 @@ class LoginConfigResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 FINDING_CATEGORY_KEYS = ("broken", "inactive", "ip_based", "internet")
-COMMENT_CATEGORY_KEYS = ("html_comment", "css_comment", "js_comment")
+COMMENT_CATEGORY_KEYS = (
+    "commented_link",
+    "internal_css",
+    "inline_css",
+    "internal_js",
+    "inline_js",
+)
 ALL_CATEGORY_KEYS = FINDING_CATEGORY_KEYS + COMMENT_CATEGORY_KEYS
+
+# Per-category severity. Links: internet (reaches outside the private
+# network — the whole point of this tool per BUILD_PLAN.md) is the most
+# consequential category, so HIGH; broken is a real dead end, MEDIUM;
+# inactive (a "#" placeholder — a known no-op, not a mistake) and
+# ip_based (a working link, just to a different VM — informational, not
+# a defect on this site) are both LOW.
+#
+# Commented Code has no live status to weigh, so this is a judgment call
+# on information-exposure risk rather than user-facing breakage:
+# commented_link is a full leftover page reference (a concrete path an
+# attacker on the network could try) so it's ranked HIGH, same tier as
+# Internet; the *_js categories can reveal endpoint/logic
+# details and are ranked MEDIUM; the *_css categories are
+# purely cosmetic (asset paths, not logic) and are ranked LOW.
+SEVERITY_RANK = {"high": 3, "medium": 2, "low": 1}
+SEVERITY_MAP = {
+    "internet": "high",
+    "broken": "medium",
+    "inactive": "low",
+    "ip_based": "low",
+    "commented_link": "high",
+    "internal_js": "medium",
+    "inline_js": "medium",
+    "internal_css": "low",
+    "inline_css": "low",
+}
+
+
+def _severity_for(category_string: str) -> str:
+    """A finding's category can be comma-combined (e.g. 'internet,broken'
+    on a Links row — see classifier.py); this takes the highest-severity
+    tag present. Defaults to 'low' for any unrecognized/empty category
+    rather than raising, since severity is a display concern that
+    shouldn't be able to break the results payload."""
+    best = None
+    best_rank = 0
+    for tag in (category_string or "").split(","):
+        sev = SEVERITY_MAP.get(tag.strip())
+        if sev and SEVERITY_RANK[sev] > best_rank:
+            best = sev
+            best_rank = SEVERITY_RANK[sev]
+    return best or "low"
 
 
 def _row_to_scan_dict(row) -> dict:
@@ -141,8 +191,8 @@ def _build_results_payload(scan_id: int):
     Findings are split into two result-section buckets here, at the API
     layer, rather than in the frontend: "findings" (the Links tab — every
     live, status-checked finding: broken/inactive/ip_based/internet) and
-    "commented_findings" (the Commented Code tab — html_comment/
-    css_comment/js_comment entries from comment_scanner.py: informational
+    "commented_findings" (the Commented Code tab — the seven
+    COMMENT_CATEGORY_KEYS entries from comment_scanner.py: informational
     only, no status check, never crawled into). Same underlying findings
     table/rows either way — this is just how the payload groups them for
     display, and lets the frontend offer per-category filtering within
@@ -162,6 +212,8 @@ def _build_results_payload(scan_id: int):
         conn.close()
 
     all_findings = [dict(row) for row in finding_rows]
+    for f in all_findings:
+        f["severity"] = _severity_for(f["category"])
     commented_findings = [
         f for f in all_findings if any(c in COMMENT_CATEGORY_KEYS for c in f["category"].split(","))
     ]
@@ -194,19 +246,6 @@ def _resolve_login_plan(payload: ScanStartRequest, reference_ip: str) -> Optiona
     """
     if payload.login is None:
         return None
-
-    if payload.login.mode == "auto":
-        if not (payload.login.login_url and payload.login.username and payload.login.password):
-            raise HTTPException(
-                status_code=400,
-                detail="login mode 'auto' requires login_url, username, and password.",
-            )
-        return {
-            "mode": "auto",
-            "login_url": payload.login.login_url,
-            "username": payload.login.username,
-            "password": payload.login.password,
-        }
 
     if payload.login.mode == "recorded":
         if not (payload.login.username and payload.login.password):
@@ -268,21 +307,7 @@ def _run_scan_worker(scan_id: int, target_url: str, site_type: str, reference_ip
                 page_html_fetcher = dyn_session.render
 
                 if login_plan is not None:
-                    if login_plan["mode"] == "auto":
-                        logged_in = dyn_session.auto_login(
-                            login_plan["login_url"], login_plan["username"], login_plan["password"]
-                        )
-                        if not logged_in:
-                            raise RuntimeError(
-                                "Auto-login failed — either no password field was found on the "
-                                "login page, or the login was submitted but doesn't look like it "
-                                "actually authenticated (still on the login page with a password "
-                                "field present, and no session cookie was set)."
-                            )
-                        session.cookies.update(dyn_session.cookies_for_requests())
-                        login_used = "auto"
-
-                    elif login_plan["mode"] == "recorded":
+                    if login_plan["mode"] == "recorded":
                         html, replay_ok = dyn_session.replay_login(
                             login_plan["start_url"], login_plan["recorded_steps"],
                             login_plan["username"], login_plan["password"],
@@ -490,15 +515,13 @@ def export_scan(scan_id: int, format: str):
     if payload is None:
         raise HTTPException(status_code=404, detail="Scan not found.")
 
-    # Exports include both buckets (Links + Commented Code) — the tab
-    # split in the API/UI shouldn't mean commented findings quietly never
-    # make it into a downloaded report.
-    export_findings = payload["findings"] + payload["commented_findings"]
-
+    # Exports include both buckets (Links + Commented Code), each as its
+    # own section — see export.py's module docstring for why they're
+    # kept separate rather than merged into one table.
     if format == "xlsx":
-        file_bytes = build_xlsx_bytes(payload["scan"], export_findings)
+        file_bytes = build_xlsx_bytes(payload["scan"], payload["findings"], payload["commented_findings"])
     else:
-        file_bytes = build_pdf_bytes(payload["scan"], export_findings)
+        file_bytes = build_pdf_bytes(payload["scan"], payload["findings"], payload["commented_findings"])
 
     filename = f"scan_{scan_id}_findings.{format}"
     return Response(
