@@ -11,10 +11,16 @@ Login Credentials: username "tester", password "testpass123"
 """
 
 import http.server
+import mimetypes
+import os
 import socketserver
-from urllib.parse import parse_qs
+from pathlib import Path
+from urllib.parse import parse_qs, unquote
 
 PORT = 5050
+
+# Absolute path to the static test-site files folder.
+STATIC_DIR = Path(__file__).parent / "static"
 USERNAME = "tester"
 PASSWORD = "testpass123"
 SESSION_COOKIE_VALUE = "authed"
@@ -504,7 +510,48 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Set-Cookie", set_cookie)
         self.end_headers()
 
+    def _serve_static_file(self, rel_path: str):
+        """
+        Serves a file from test_site/static/. Returns 404 if the file does
+        not exist — used to exercise the broken-link finding in the audit tool.
+        """
+        # Prevent directory traversal
+        safe_rel = rel_path.lstrip("/")
+        file_path = (STATIC_DIR / safe_rel).resolve()
+        if not str(file_path).startswith(str(STATIC_DIR.resolve())):
+            return self._send_html(b"<h1>403 Forbidden</h1>", status=403)
+
+        if file_path.is_dir():
+            file_path = file_path / "index.html"
+
+        if not file_path.exists():
+            body = (
+                b"<!DOCTYPE html><html><body style='background:#0f172a;color:#ef4444;"
+                b"font-family:sans-serif;padding:40px;'>"
+                b"<h1>404 Not Found</h1><p>Static file not found.</p></body></html>"
+            )
+            return self._send_html(body, status=404)
+
+        mime, _ = mimetypes.guess_type(str(file_path))
+        mime = mime or "application/octet-stream"
+        data = file_path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_GET(self):
+        # ── Static test site (no login) ──────────────────────────────────
+        # Accessible at http://127.0.0.1:5050/static/
+        # Purpose-built to test Bug Fix 1 (static scan), Fix 2 (domain
+        # exclusion), and Fix 3 (trailing-hash links crawled).
+        path_decoded = unquote(self.path.split("?")[0])  # strip query string
+        if path_decoded == "/static" or path_decoded.startswith("/static/"):
+            rel = path_decoded[len("/static"):] or "/"
+            return self._serve_static_file(rel)
+
+        # ── Dynamic (login-gated) site ───────────────────────────────────
         if self.path in ("/", "/index.html"):
             if not self._is_authed():
                 return self._redirect("/login")
@@ -552,6 +599,11 @@ if __name__ == "__main__":
     socketserver.ThreadingTCPServer.allow_reuse_address = True
     with socketserver.ThreadingTCPServer(("127.0.0.1", PORT), Handler) as httpd:
         print(f"🚀 Apex Enterprise Test Portal running at http://127.0.0.1:{PORT}/")
-        print(f"🔑 Credentials: username={USERNAME!r} password={PASSWORD!r}")
-        print(f"🎯 Target URL for audit tool: http://127.0.0.1:{PORT}/")
+        print(f"🔑 Dynamic site credentials: username={USERNAME!r} password={PASSWORD!r}")
+        print(f"🎯 Dynamic scan target URL : http://127.0.0.1:{PORT}/")
+        print()
+        print(f"📄 Static test site (no login): http://127.0.0.1:{PORT}/static/")
+        print(f"🎯 Static scan target URL  : http://127.0.0.1:{PORT}/static/")
+        print()
+        print("   Static site covers: Fix 1 (static scan), Fix 2 (domain exclusion), Fix 3 (trailing # links)")
         httpd.serve_forever()

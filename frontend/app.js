@@ -73,6 +73,16 @@ function buildScanPayload(state) {
     site_type: state.siteType === "dynamic" ? "dynamic" : "static",
   };
 
+  // Basic URL validation — must have a non-empty host (IP or hostname both fine).
+  try {
+    const parsed = new URL(targetUrl);
+    if (!parsed.hostname) {
+      return { error: "Target URL must include a valid host (e.g. https://10.0.0.1 or https://portal.company.local)." };
+    }
+  } catch (e) {
+    return { error: "Target URL is not a valid URL (e.g. https://10.0.0.1 or https://portal.company.local)." };
+  }
+
   if (state.requiresLogin) {
     if (payload.site_type !== "dynamic") {
       return { error: "Login requires site type 'Dynamic' — login runs through the browser engine." };
@@ -245,7 +255,7 @@ function initApp() {
 
   async function refreshRecordedFlowStatus() {
     const host = logic.extractHost(els.targetUrl.value.trim());
-    if (!host || !logic.isLiteralIPv4(host)) {
+    if (!host) {
       els.recordedFlowStatus.textContent = "Enter a valid target URL above to check for a recorded flow.";
       return;
     }

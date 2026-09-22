@@ -6,10 +6,14 @@ extracted link element, and returns a dict shaped like a `findings` row
 (minus scan_id/found_on_page, which the caller already knows), or None if
 the link is clean.
 
-Design note: if a link is classified as "inactive" (bare trailing "#"), the
+Design note: if a link is classified as "inactive" (any href ending with "#"), the
 broken-status fetch is skipped — a trailing "#" is a no-op placeholder, not
-a real navigation target, so there's nothing meaningful to fetch. Flagging
-this as an assumption worth confirming, not a silent default.
+a real navigation target, so there's nothing meaningful to fetch.
+
+Design note: internet links (external hostnames) also skip the broken check.
+They are external to the private network being audited and are expected to be
+unreachable from the scan host, so a "broken" tag on them would be misleading.
+IP-based links (different VM on the internal network) still get the broken check.
 """
 
 from typing import Optional, Dict
@@ -55,7 +59,12 @@ def classify_link(
         categories.append("internet")
         evidence_parts.append(f"references external hostname {host}")
 
-    if not is_inactive:
+    if not is_inactive and host_class != "internet":
+        # Internet links are always external to this private network and are
+        # expected to be unreachable from the scan host — skip the broken
+        # check so they never get tagged "internet,broken" just because the
+        # VM can't reach the public web. IP-based links are on the internal
+        # network so they still get checked.
         result = check_link_status(element.absolute_url, session=session)
         if result["broken"]:
             categories.append("broken")

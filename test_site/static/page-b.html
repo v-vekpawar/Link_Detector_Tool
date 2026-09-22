@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Page B — Static Audit Test Site</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0f172a; color: #f8fafc; padding: 40px; }
+  h1 { color: #6366f1; margin-bottom: 16px; }
+  p { color: #94a3b8; margin-bottom: 12px; }
+  a { color: #06b6d4; }
+  nav { margin-bottom: 32px; }
+  nav a { margin-right: 16px; }
+  .clean-badge {
+    display: inline-block;
+    padding: 6px 14px;
+    background: rgba(16,185,129,0.15);
+    color: #10b981;
+    border: 1px solid rgba(16,185,129,0.3);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-top: 12px;
+  }
+</style>
+</head>
+<body>
+  <nav>
+    <a href="/static/">← Home</a>
+    <a href="/static/page-a.html">Page A</a>
+  </nav>
+
+  <h1>Page B — Clean Page</h1>
+  <p>This page has no broken links, no internet links, and no IP-based links.</p>
+  <p>The crawler should reach and scan this page but produce <strong>zero findings</strong> from it.</p>
+  <span class="clean-badge">✓ No issues expected</span>
+
+  <!-- Only valid internal link back -->
+  <p style="margin-top: 24px;"><a href="/static/">Return to home</a></p>
+</body>
+</html>

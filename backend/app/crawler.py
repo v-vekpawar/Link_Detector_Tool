@@ -36,7 +36,7 @@ from urllib.parse import urlparse, urlunparse
 
 import requests
 
-from app.config import MAX_PAGES_PER_SCAN, classify_host, is_inactive_href
+from app.config import MAX_PAGES_PER_SCAN, CRAWL_USER_AGENT, classify_host, is_excluded_domain, is_inactive_href
 from app.classifier import classify_link
 from app.extractor import extract_link_elements
 from app.comment_scanner import extract_page_comment_findings, fetch_and_scan_external_asset
@@ -111,9 +111,6 @@ def _normalize_url(url: str) -> str:
     """Strip the fragment so '#'-variants of the same page dedup to one entry."""
     parsed = urlparse(url)
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, parsed.query, ""))
-    """Strip the fragment so '#'-variants of the same page dedup to one entry."""
-    parsed = urlparse(url)
-    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, parsed.query, ""))
 
 
 def crawl_site(
@@ -182,7 +179,7 @@ def crawl_site(
                 continue
         else:
             try:
-                resp = sess.get(page_url, timeout=10)
+                resp = sess.get(page_url, timeout=10, headers={"User-Agent": CRAWL_USER_AGENT})
             except requests.exceptions.RequestException:
                 # Page itself unreachable — nothing to extract, can't recurse further.
                 # (If it was reached via a link, that link's own broken-check already
@@ -200,6 +197,11 @@ def crawl_site(
 
         elements = extract_link_elements(html, page_url)
         for element in elements:
+            # Skip links to excluded domains — but never exclude the target host itself
+            elem_host = urlparse(element.absolute_url).hostname or ""
+            if is_excluded_domain(elem_host, reference_ip):
+                continue
+
             total_links_checked += 1
             finding = classify_link(element, reference_ip, session=sess)
             if finding:
@@ -219,6 +221,20 @@ def crawl_site(
             if not _is_navigable(element):
                 continue
             if is_inactive_href(element.raw_value):
+                # The href is inactive (ends with "#"), so we don't follow it
+                # as a navigation target. However, if the base URL (fragment
+                # stripped) points to a *different* same-host page, enqueue
+                # that page so any issues on it are still discovered.
+                # A bare "#" strips to the current page's URL — nothing new to enqueue.
+                base_normalized = _normalize_url(element.absolute_url)
+                current_normalized = _normalize_url(page_url)
+                if base_normalized != current_normalized:
+                    base_host = urlparse(element.absolute_url).hostname or ""
+                    if (classify_host(base_host, reference_ip) == "same"
+                            and base_normalized not in visited_pages
+                            and base_normalized not in queued_normalized):
+                        queued_normalized.add(base_normalized)
+                        queue.append(element.absolute_url)
                 continue
             if finding and "broken" in finding["category"].split(","):
                 continue

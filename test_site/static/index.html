@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Static Test Site — Link Audit Tool</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --card: rgba(30, 41, 59, 0.8);
+    --border: rgba(255,255,255,0.1);
+    --indigo: #6366f1;
+    --cyan: #06b6d4;
+    --green: #10b981;
+    --red: #ef4444;
+    --amber: #f59e0b;
+    --slate: #94a3b8;
+    --white: #f8fafc;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--white);
+    min-height: 100vh;
+  }
+  header {
+    background: rgba(15,23,42,0.9);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .brand { font-size: 1.2rem; font-weight: 700; color: var(--indigo); }
+  nav a {
+    color: var(--slate);
+    text-decoration: none;
+    margin-left: 24px;
+    font-size: 0.95rem;
+    font-weight: 500;
+    transition: color 0.2s;
+  }
+  nav a:hover { color: var(--white); }
+  .badge {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .badge-fix1  { background: rgba(99,102,241,0.15); color: var(--indigo); border: 1px solid rgba(99,102,241,0.3); }
+  .badge-fix2  { background: rgba(239,68,68,0.15);  color: var(--red);    border: 1px solid rgba(239,68,68,0.3); }
+  .badge-fix3  { background: rgba(16,185,129,0.15); color: var(--green);  border: 1px solid rgba(16,185,129,0.3); }
+  .badge-skip  { background: rgba(148,163,184,0.12); color: var(--slate); border: 1px solid rgba(148,163,184,0.3); }
+
+  main { max-width: 860px; margin: 40px auto; padding: 0 24px; }
+
+  section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px 32px;
+    margin-bottom: 28px;
+  }
+  section h2 {
+    font-size: 1.15rem;
+    font-weight: 700;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-desc {
+    color: var(--slate);
+    font-size: 0.9rem;
+    margin-bottom: 20px;
+    line-height: 1.5;
+  }
+  .link-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 16px;
+    background: rgba(15,23,42,0.6);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 10px;
+  }
+  .link-row:last-child { margin-bottom: 0; }
+  .link-row .info { flex: 1; min-width: 0; }
+  .link-row .label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--slate);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 5px;
+  }
+  .link-row a, .link-row code {
+    color: var(--cyan);
+    font-family: 'Courier New', monospace;
+    font-size: 0.92rem;
+    word-break: break-all;
+    text-decoration: none;
+  }
+  .link-row a:hover { text-decoration: underline; }
+  .link-row .expected {
+    font-size: 0.78rem;
+    color: var(--slate);
+    margin-top: 4px;
+  }
+  .link-row .expected strong { color: var(--amber); }
+
+  .notice {
+    font-size: 0.8rem;
+    color: var(--slate);
+    padding: 10px 14px;
+    background: rgba(99,102,241,0.08);
+    border-left: 3px solid var(--indigo);
+    border-radius: 4px;
+    margin-top: 16px;
+    line-height: 1.5;
+  }
+
+  footer {
+    text-align: center;
+    padding: 24px;
+    color: var(--slate);
+    font-size: 0.82rem;
+    border-top: 1px solid var(--border);
+    margin-top: 40px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">📡 Static Audit Test Site</div>
+  <nav>
+    <a href="/static/">Home</a>
+    <a href="/static/page-a.html">Page A</a>
+    <a href="/static/page-b.html">Page B</a>
+    <a href="/static/trailing-hash.html">Trailing Hash</a>
+  </nav>
+</header>
+
+<main>
+
+  <section>
+    <h2>🧪 What This Site Tests</h2>
+    <p class="section-desc">
+      This is a <strong>no-login static site</strong> served at <code>http://127.0.0.1:5050/static/</code>
+      to test the three bug fixes applied to the Link &amp; Navigation Audit Tool.
+      Run a <strong>Static</strong> scan against <code>http://127.0.0.1:5050/static/</code> and verify the results below.
+    </p>
+  </section>
+
+  <!-- ── BUG FIX 1: STATIC SCAN ───────────────────────────────── -->
+  <section>
+    <h2>
+      Fix 1 — Static Scan Works
+      <span class="badge badge-fix1">Bug #1</span>
+    </h2>
+    <p class="section-desc">
+      The static engine now sends the correct <code>User-Agent</code> header on page fetches
+      and the duplicated dead code in <code>_normalize_url()</code> is removed.
+      If you can see <em>any</em> findings at all from a Static scan, Fix 1 is working.
+    </p>
+
+    <div class="link-row">
+      <div class="info">
+        <div class="label">Broken link (404)</div>
+        <a href="/static/this-does-not-exist.html">/static/this-does-not-exist.html</a>
+        <div class="expected">Expected finding: <strong>Broken</strong></div>
+      </div>
+      <span class="badge badge-fix2">Broken</span>
+    </div>
+
+    <div class="link-row">
+      <div class="info">
+        <div class="label">External / internet link</div>
+        <a href="https://example.com/docs">https://example.com/docs</a>
+        <div class="expected">Expected finding: <strong>Internet</strong></div>
+      </div>
+      <span class="badge badge-fix1">Internet</span>
+    </div>
+
+    <div class="link-row">
+      <div class="info">
+        <div class="label">IP-based link (different VM)</div>
+        <a href="http://192.0.2.99/other-service">http://192.0.2.99/other-service</a>
+        <div class="expected">Expected finding: <strong>IP-based</strong></div>
+      </div>
+      <span class="badge badge-fix1">IP-based</span>
+    </div>
+
+    <div class="notice">
+      ✅ Run a <strong>Static</strong> scan on <code>http://127.0.0.1:5050/static/</code>.
+      You should see findings for all three links above. If results are empty, the bug is not fixed.
+    </div>
+  </section>
+
+  <!-- ── BUG FIX 2: DOMAIN EXCLUSION ─────────────────────────── -->
+  <section>
+    <h2>
+      Fix 2 — Domain Exclusion
+      <span class="badge badge-fix2">Bug #2</span>
+    </h2>
+    <p class="section-desc">
+      Links to <code>army.mil</code> (and any subdomain like <code>www.army.mil</code>) are
+      configured in <code>EXCLUDED_DOMAINS</code> and must <em>not</em> appear in scan results at all.
+    </p>
+
+    <div class="link-row">
+      <div class="info">
+        <div class="label">Excluded domain — should be INVISIBLE in results</div>
+        <a href="https://army.mil/resources">https://army.mil/resources</a>
+        <div class="expected">Expected: <strong>no finding generated, not counted</strong></div>
+      </div>
+      <span class="badge badge-skip">Excluded</span>
+    </div>
+
+    <div class="link-row">
+      <div class="info">
+        <div class="label">Excluded subdomain — also INVISIBLE in results</div>
+        <a href="https://www.army.mil/careers">https://www.army.mil/careers</a>
+        <div class="expected">Expected: <strong>no finding generated, not counted</strong></div>
+      </div>
+      <span class="badge badge-skip">Excluded</span>
+    </div>
+
+    <div class="link-row">
+      <div class="info">
+        <div class="label">Non-excluded internet link — VISIBLE in results</div>
+        <a href="https://example.org/compare">https://example.org/compare</a>
+        <div class="expected">Expected finding: <strong>Internet</strong></div>
+      </div>
+      <span class="badge badge-fix1">Internet</span>
+    </div>
+
+    <div class="notice">
+      ✅ After the scan, confirm <code>army.mil</code> and <code>www.army.mil</code> links
+      do <strong>not</strong> appear in results, while <code>example.org</code> <strong>does</strong>.
+    </div>
+  </section>
+
+  <!-- ── BUG FIX 3: TRAILING HASH LINKS ───────────────────────── -->
+  <section>
+    <h2>
+      Fix 3 — Trailing-Hash Links Crawled
+      <span class="badge badge-fix3">Bug #3</span>
+    </h2>
+    <p class="section-desc">
+      A link like <code>href="page.html#"</code> (trailing hash) is <em>not</em> a bare
+      no-op anymore. The base page (<code>page.html</code>) should now be crawled and
+      any issues on it discovered. Only a bare <code>href="#"</code> is flagged Inactive.
+    </p>
+
+    <div class="link-row">
+      <div class="info">
+        <div class="label">Bare # — should be flagged Inactive (unchanged)</div>
+        <a href="#">#</a>
+        <div class="expected">Expected finding: <strong>Inactive</strong> — page not crawled</div>
+      </div>
+      <span class="badge badge-skip">Inactive</span>
+    </div>
+
+    <div class="link-row">
+      <div class="info">
+        <div class="label">Trailing hash — page SHOULD be crawled (Fix 3)</div>
+        <a href="/static/trailing-hash.html#">/static/trailing-hash.html#</a>
+        <div class="expected">
+          Expected: <strong>trailing-hash.html is crawled</strong>, its broken link inside is discovered
+        </div>
+      </div>
+      <span class="badge badge-fix3">Crawled</span>
+    </div>
+
+    <div class="link-row">
+      <div class="info">
+        <div class="label">Anchor link (real section) — normal, not inactive</div>
+        <a href="/static/page-a.html#section-two">/static/page-a.html#section-two</a>
+        <div class="expected">Expected: clean link, <strong>page-a.html crawled</strong></div>
+      </div>
+      <span class="badge badge-fix3">Normal</span>
+    </div>
+
+    <div class="notice">
+      ✅ After the scan, check that <code>trailing-hash.html</code>'s broken link
+      <strong>appears in results</strong> (proving the page was crawled via the trailing-hash href).
+    </div>
+  </section>
+
+  <!-- ── MULTI-PAGE CRAWL ─────────────────────────────────────── -->
+  <section>
+    <h2>Multi-page Crawl Verification</h2>
+    <p class="section-desc">
+      Links to sub-pages — the crawler should follow these and discover any issues on them too.
+    </p>
+
+    <div class="link-row">
+      <div class="info">
+        <div class="label">Internal page A</div>
+        <a href="/static/page-a.html">/static/page-a.html</a>
+        <div class="expected">Should be crawled; contains its own broken link</div>
+      </div>
+    </div>
+
+    <div class="link-row">
+      <div class="info">
+        <div class="label">Internal page B</div>
+        <a href="/static/page-b.html">/static/page-b.html</a>
+        <div class="expected">Should be crawled; clean page (no findings)</div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>Static Audit Test Site · http://127.0.0.1:5050/static/</footer>
+
+</body>
+</html>

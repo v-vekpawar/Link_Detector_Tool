@@ -38,7 +38,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app import scan_sessions
-from app.config import extract_reference_ip
+from app.config import extract_reference_host
 from app.crawler import crawl_site
 from app.db import get_connection, init_db
 from app.export import build_pdf_bytes, build_xlsx_bytes
@@ -390,21 +390,21 @@ def start_scan(payload: ScanStartRequest):
             detail="login mode 'recorded' requires site_type='dynamic' (replay uses the Tier 2 browser engine).",
         )
 
-    reference_ip = extract_reference_ip(payload.target_url)
-    if not reference_ip:
-        raise HTTPException(status_code=400, detail="Could not determine a reference IP from target_url.")
+    reference_host = extract_reference_host(payload.target_url)
+    if not reference_host:
+        raise HTTPException(status_code=400, detail="Could not determine a reference host from target_url.")
 
     # Cheap, network-free validation only — raises HTTPException(400) for
     # anything wrong with the request itself. Anything that actually talks
     # to the target happens later, in the background thread.
-    login_plan = _resolve_login_plan(payload, reference_ip)
+    login_plan = _resolve_login_plan(payload, reference_host)
 
     conn = get_connection()
     try:
         cursor = conn.execute(
             """INSERT INTO scans (target_url, target_ip, site_type, login_used, status)
                VALUES (?, ?, ?, 'none', 'running')""",
-            (payload.target_url, reference_ip, payload.site_type),
+            (payload.target_url, reference_host, payload.site_type),
         )
         conn.commit()
         scan_id = cursor.lastrowid
@@ -415,7 +415,7 @@ def start_scan(payload: ScanStartRequest):
 
     thread = threading.Thread(
         target=_run_scan_worker,
-        args=(scan_id, payload.target_url, payload.site_type, reference_ip, login_plan),
+        args=(scan_id, payload.target_url, payload.site_type, reference_host, login_plan),
         daemon=True,
     )
     thread.start()

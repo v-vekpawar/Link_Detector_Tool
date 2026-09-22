@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Page A — Static Audit Test Site</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0f172a; color: #f8fafc; padding: 40px; }
+  h1 { color: #6366f1; margin-bottom: 16px; }
+  p { color: #94a3b8; margin-bottom: 12px; }
+  a { color: #06b6d4; }
+  nav { margin-bottom: 32px; }
+  nav a { margin-right: 16px; }
+  .broken { color: #ef4444; }
+  #section-two { margin-top: 32px; padding: 20px; border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; }
+</style>
+</head>
+<body>
+  <nav>
+    <a href="/static/">← Home</a>
+    <a href="/static/page-b.html">Page B</a>
+  </nav>
+
+  <h1>Page A</h1>
+  <p>This page is reachable from the home page and also via an anchor link (<code>page-a.html#section-two</code>).</p>
+
+  <!-- Broken link on Page A — should be discovered when crawler follows the link from home -->
+  <p>Broken link on this sub-page (should show up in results when page-a is crawled):</p>
+  <p><a href="/static/no-such-page-on-page-a.html" class="broken">/static/no-such-page-on-page-a.html</a> — 404</p>
+
+  <!-- External link on Page A -->
+  <p><a href="https://example.net/page-a-external">https://example.net/page-a-external</a> — Internet link</p>
+
+  <div id="section-two">
+    <h2>Section Two</h2>
+    <p>This is the anchor target for <code>page-a.html#section-two</code> links. The crawler should still crawl this page
+    even when it arrives via the fragment URL.</p>
+  </div>
+</body>
+</html>

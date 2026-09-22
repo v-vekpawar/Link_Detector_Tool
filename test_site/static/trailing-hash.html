@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Trailing Hash Test — Static Audit Test Site</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0f172a; color: #f8fafc; padding: 40px; }
+  h1 { color: #10b981; margin-bottom: 16px; }
+  p { color: #94a3b8; margin-bottom: 12px; line-height: 1.6; }
+  a { color: #06b6d4; }
+  nav { margin-bottom: 32px; }
+  nav a { margin-right: 16px; }
+  .highlight {
+    padding: 16px 20px;
+    background: rgba(16,185,129,0.1);
+    border: 1px solid rgba(16,185,129,0.3);
+    border-radius: 10px;
+    margin-bottom: 20px;
+    font-size: 0.9rem;
+    color: #10b981;
+  }
+  .broken { color: #ef4444; }
+</style>
+</head>
+<body>
+  <nav>
+    <a href="/static/">← Home</a>
+    <a href="/static/page-a.html">Page A</a>
+  </nav>
+
+  <h1>Trailing Hash Page</h1>
+
+  <div class="highlight">
+    ✅ <strong>If you see this page's findings in your scan results</strong>, Fix 3 is working correctly.
+    The home page links to this page as <code>href="/static/trailing-hash.html#"</code>
+    (trailing hash), which previously caused the crawler to skip it entirely.
+  </div>
+
+  <p>This page exists and is reachable. The link on the home page had a trailing <code>#</code>,
+  but the base URL (<code>/static/trailing-hash.html</code>) is a real page and should be crawled.</p>
+
+  <!-- Broken link deliberately placed here so its discovery proves this page was crawled -->
+  <p>
+    Broken link here (proves crawler reached this page via the trailing-hash href):<br>
+    <a href="/static/ghost-page-from-trailing-hash.html" class="broken">
+      /static/ghost-page-from-trailing-hash.html
+    </a>
+  </p>
+
+  <!-- Bare # link for contrast -->
+  <p>A bare <code>href="#"</code> link (should be flagged Inactive, NOT crawled):
+    <a href="#">#</a>
+  </p>
+</body>
+</html>
