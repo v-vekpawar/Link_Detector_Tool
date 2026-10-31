@@ -90,24 +90,167 @@ def _migrate_login_configs_drop_auto(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_login_configs_add_captcha_answer(conn: sqlite3.Connection) -> None:
+    """
+    Adds login_configs.captcha_answer (fixed captcha value for a target's
+    recorded login flow, if it has one) to a database created before this
+    column existed. Unlike the mode-CHECK migration above, this is a plain
+    additive column, so ALTER TABLE ... ADD COLUMN is enough — no rebuild
+    needed. Checked against PRAGMA table_info so re-running init_db() on an
+    already-migrated DB is a no-op, same as the rest of this module.
+    """
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(login_configs)")}
+    if "captcha_answer" in columns:
+        return  # already migrated (or a fresh DB where schema.sql already created it)
+    conn.execute("ALTER TABLE login_configs ADD COLUMN captcha_answer TEXT")
+    conn.commit()
+
+
+def _migrate_login_configs_add_logout_fields(conn: sqlite3.Connection) -> None:
+    """
+    Adds login_configs.logout_url and login_configs.logout_steps (both TEXT,
+    nullable) to databases created before item #1 of the planned changes was
+    implemented. Additive columns only — no table rebuild needed. Idempotent:
+    re-running init_db() on an already-migrated DB does nothing.
+    """
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(login_configs)")}
+    added = False
+    if "logout_url" not in columns:
+        conn.execute("ALTER TABLE login_configs ADD COLUMN logout_url TEXT")
+        added = True
+    if "logout_steps" not in columns:
+        conn.execute("ALTER TABLE login_configs ADD COLUMN logout_steps TEXT")
+        added = True
+    if added:
+        conn.commit()
+
+
+def _migrate_login_configs_add_logout_start_url(conn: sqlite3.Connection) -> None:
+    """
+    Adds login_configs.logout_start_url (TEXT, nullable): the page the
+    recorded logout steps were performed on. Scan-end logout replay must
+    return to THAT page — the authed home carrying the logout control — not
+    the scan target, which for many sites is the bare login form (every
+    logout selector used to fail "matched 0 elements" there). Additive
+    column, so ALTER TABLE ... ADD COLUMN is enough (same pattern as
+    captcha_answer). Idempotent like the rest of this module.
+    """
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(login_configs)")}
+    if "logout_start_url" in columns:
+        return  # already migrated (or a fresh DB where schema.sql already created it)
+    conn.execute("ALTER TABLE login_configs ADD COLUMN logout_start_url TEXT")
+    conn.commit()
+
+
+def _migrate_scans_add_stopped_status(conn: sqlite3.Connection) -> None:
+    """
+    Adds 'stopped' to scans.status CHECK (cooperative scan-stop feature).
+    CREATE TABLE IF NOT EXISTS in schema.sql is a no-op on an already-existing
+    table, and SQLite has no ALTER TABLE ... ALTER CHECK, so — like
+    _migrate_login_configs_drop_auto above — this rebuilds the table.
+
+    Unlike that migration, findings.scan_id REFERENCES scans(id), so a plain
+    ALTER TABLE scans RENAME is unsafe here: SQLite rewrites the child's
+    REFERENCES clause to the backup name (verified on this project's SQLite),
+    leaving it dangling after the backup is dropped. Instead the new table is
+    built under a temp name, data copied, old table dropped, temp renamed —
+    a sequence that never renames the referenced table, so findings keeps
+    pointing at scans throughout. Wrapped in one transaction; verified
+    afterwards with PRAGMA foreign_key_check. Idempotent: re-running on an
+    already-migrated DB (or a fresh DB) does nothing.
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='scans'"
+    ).fetchone()
+    if row is None or "'stopped'" in (row["sql"] or ""):
+        return  # table doesn't exist yet, or already migrated — nothing to do
+
+    # FK enforcement OFF first: dropping the parent with it ON would cascade
+    # the drop into findings and wipe every stored finding (verified). The
+    # temp-name sequence never renames the referenced table itself, so the
+    # child's REFERENCES scans(id) survives the rebuild untouched.
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.execute("BEGIN")
+    try:
+        conn.execute(
+            """
+            CREATE TABLE scans_new (
+                id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+                target_url           TEXT NOT NULL,
+                target_ip            TEXT,
+                site_type            TEXT NOT NULL CHECK (site_type IN ('static', 'dynamic')),
+                login_used           TEXT NOT NULL DEFAULT 'none' CHECK (login_used IN ('none', 'auto', 'recorded')),
+                started_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                completed_at         DATETIME,
+                status               TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'completed', 'failed', 'stopped')),
+                pages_crawled        INTEGER,
+                total_links_checked  INTEGER,
+                duration_seconds     INTEGER
+            )
+            """
+        )
+        conn.execute(
+            """INSERT INTO scans_new (id, target_url, target_ip, site_type, login_used, started_at,
+                                      completed_at, status, pages_crawled, total_links_checked, duration_seconds)
+               SELECT id, target_url, target_ip, site_type, login_used, started_at,
+                      completed_at, status, pages_crawled, total_links_checked, duration_seconds
+               FROM scans"""
+        )
+        conn.execute("DROP TABLE scans")
+        conn.execute("ALTER TABLE scans_new RENAME TO scans")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
+
+    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise sqlite3.IntegrityError(
+            f"scans status migration left dangling foreign keys: {violations}"
+        )
+
+
+def _migrate_screenshot_shots_add_two_panel(conn: sqlite3.Connection) -> None:
+    """
+    Adds screenshot_shots.two_panel (whether the proof stitches a
+    same-host target-result panel) to databases created after the
+    screenshots feature landed but before two-panel proofs existed.
+    Additive column only — idempotent like the other _migrate_* functions.
+    """
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(screenshot_shots)")}
+    tables = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "screenshot_shots" not in tables:
+        return  # screenshots tables don't exist yet — schema.sql creates them fresh
+    if "two_panel" in columns:
+        return
+    conn.execute("ALTER TABLE screenshot_shots ADD COLUMN two_panel INTEGER NOT NULL DEFAULT 0")
+    conn.commit()
+
+
 def init_db() -> None:
     """
     Creates the scans / findings / login_configs tables if they don't already
     exist. Safe to call every time the app starts — CREATE TABLE IF NOT
     EXISTS means it's a no-op on an already-initialized database.
 
-    Also runs _migrate_login_configs_drop_auto(), which handles the one
-    schema change CREATE TABLE IF NOT EXISTS can't: tightening
-    login_configs.mode's CHECK constraint on a database that already has
-    the table. Safe/idempotent to re-run on every startup — see that
-    function's docstring.
+    Also runs all _migrate_* functions, which handle schema
+    changes that CREATE TABLE IF NOT EXISTS can't apply to an already-existing
+    table. Safe/idempotent to re-run on every startup — see each function's
+    docstring.
     """
     schema_sql = SCHEMA_PATH.read_text()
     conn = get_connection()
     try:
         conn.executescript(schema_sql)
         conn.commit()
+        _migrate_scans_add_stopped_status(conn)
+        _migrate_screenshot_shots_add_two_panel(conn)
         _migrate_login_configs_drop_auto(conn)
+        _migrate_login_configs_add_captcha_answer(conn)
+        _migrate_login_configs_add_logout_fields(conn)
+        _migrate_login_configs_add_logout_start_url(conn)
     finally:
         conn.close()
 

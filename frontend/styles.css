@@ -60,6 +60,12 @@
   box-sizing: border-box;
 }
 
+/* The `hidden` attribute must always win — without this, any author
+   `display` rule (flex, inline-flex, …) silently unhides elements. */
+[hidden] {
+  display: none !important;
+}
+
 html, body {
   margin: 0;
   padding: 0;
@@ -86,6 +92,7 @@ a {
 .page-header {
   border-bottom: 1px solid var(--border);
   padding: 28px 24px 20px;
+  position: relative;
 }
 
 .page-header h1 {
@@ -101,10 +108,123 @@ a {
   max-width: 60ch;
 }
 
+/* --- Settings gear + popover (Feature C: per-scan overrides) --- */
+
+.settings-gear {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+  width: 40px;
+  height: 40px;
+  font-size: 1.25rem;
+  line-height: 1;
+  background: var(--surface);
+  color: var(--ink-muted);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.settings-gear:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.settings-gear[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.settings-gear.has-values::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+}
+
+.settings-pop {
+  position: absolute;
+  top: 68px;
+  right: 24px;
+  width: 288px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  padding: 12px 14px;
+  z-index: 50;
+}
+
+.settings-pop[hidden] {
+  display: none;
+}
+
+.settings-pop h2 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.settings-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+}
+
+.settings-pop input[type="number"],
+.settings-pop textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+
+.settings-pop textarea {
+  resize: vertical;
+  margin-top: 4px;
+}
+
+.settings-pop .checkbox-option {
+  margin: 8px 0;
+}
+
+.settings-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.settings-pop .settings-error {
+  color: var(--danger);
+}
+
+.settings-pop .settings-field-error {
+  color: var(--danger);
+  font-size: 0.8rem;
+  margin: 2px 0 0;
+}
+
 .container {
   max-width: 880px;
   margin: 0 auto;
-  padding: 28px 24px 64px;
+  padding: 28px 16px 64px;
 }
 
 .section-label {
@@ -197,15 +317,22 @@ input[type="password"]:focus {
   margin: 0 0 18px 2px;
 }
 
-.record-flow-panel {
-  margin-top: 12px;
-  padding: 12px 14px;
-  background: var(--accent-soft);
-  border-radius: var(--radius);
+.flow-btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0;
 }
 
-.record-flow-panel p {
-  margin: 0 0 10px;
+.field-row-inline {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  max-width: 480px;
+}
+
+.field-row-inline input {
+  flex: 1;
 }
 
 .form-error {
@@ -276,11 +403,22 @@ input:focus-visible {
   margin: 0;
 }
 
+.stop-row {
+  margin-top: 10px;
+}
+
 /* --- Results --- */
 
 .results-section {
   border-top: 1px solid var(--border);
   padding-top: 20px;
+}
+
+/* Full-bleed results: the section lives outside .container so the table
+   spans the window (24px gutters) while form/progress stay centered. */
+.results-section-full {
+  padding: 28px 64px 72px;
+  margin-top: 0;
 }
 
 .badge-row {
@@ -303,6 +441,7 @@ input:focus-visible {
 }
 
 .badge-broken { background: var(--danger-soft); color: var(--danger); }
+.badge-data_uri { background: var(--warning-soft); color: var(--warning); }
 .badge-inactive { background: var(--warning-soft); color: var(--warning); }
 .badge-ip_based { background: var(--ip-based-soft); color: var(--ip-based); }
 .badge-internet { background: var(--internet-soft); color: var(--internet); }
@@ -326,6 +465,21 @@ input:focus-visible {
   padding: 0;
   display: flex;
   gap: 8px;
+}
+
+/* Tabs left + export buttons right in one row above the filters. */
+.results-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.results-head-row .tab-row,
+.results-head-row .export-row {
+  margin: 0;
 }
 
 .tab-badge {
@@ -376,10 +530,104 @@ input:focus-visible {
   border-color: transparent;
 }
 
+/* --- Broken drill-down second row (display-only refinement) --- */
+
+.drilldown-row {
+  margin-top: -4px;
+}
+
+.badge-drill {
+  background: var(--surface);
+  color: var(--ink-muted);
+  border: 1px solid var(--border-strong);
+  font-size: 0.78rem;
+}
+
+#broken-drilldown[hidden],
+#category-filters[hidden],
+#pager-row[hidden] {
+  display: none;
+}
+
+.badge-drill-all { background: var(--danger-soft); color: var(--danger); }
+.badge-drill-image { background: var(--internet-soft); color: var(--internet); }
+.badge-drill-file { background: var(--warning-soft); color: var(--warning); }
+.badge-drill-page { background: var(--accent-soft); color: var(--accent); }
+.badge-drill-other { background: transparent; color: var(--ink-muted); border: 1px dashed var(--border-strong); }
+
 .table-scroll {
-  overflow-x: auto;
+  overflow: auto;
+  max-height: 70vh;
   border: 1px solid var(--border);
   border-radius: var(--radius);
+}
+
+/* --- Proof screenshots gallery (screenshots feature) --- */
+
+#screenshots-section {
+  margin-top: 28px;
+}
+
+#screenshots-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  margin: 12px 0;
+}
+
+.shot-group-title {
+  grid-column: 1 / -1;
+  margin: 12px 0 4px;
+  font-size: 0.95rem;
+}
+
+.screenshot-figure {
+  display: block;
+  max-width: 100%;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.shot-thumb {
+  display: block;
+  aspect-ratio: 4 / 3;
+  background: var(--surface);
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+}
+
+.shot-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.screenshot-figure figcaption {
+  padding: 8px 10px;
+  font-size: 0.82rem;
+}
+
+.shot-cap-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shot-cap-meta {
+  color: var(--ink-muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.screenshot-note-flag {
+  color: var(--warning);
 }
 
 table {
@@ -399,11 +647,34 @@ th {
   background: #f5f6f3;
   font-weight: 600;
   white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
 
 td.mono {
   font-family: var(--font-mono);
   word-break: break-all;
+}
+
+/* Friendly element locations: proportional type, muted ancestors. */
+td.location-cell {
+  font-size: 0.82rem;
+  min-width: 140px;
+}
+
+.location-ancestor {
+  color: var(--ink-muted);
+  font-size: 0.78rem;
+}
+
+.location-sep {
+  color: var(--border-strong);
+}
+
+.location-own {
+  color: var(--ink);
+  font-weight: 500;
 }
 
 tbody tr:last-child td {
@@ -415,6 +686,62 @@ tbody tr:last-child td {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+/* Column visibility toggles inside table headers. */
+.col-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.col-toggle input {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* Hidden-column placeholders: narrow cells (checkbox only in the header)
+   that hold alignment so visible columns never shift under wrong headers. */
+th.col-hidden,
+td.col-hidden {
+  width: 30px;
+  max-width: 30px;
+  min-width: 30px;
+  padding-left: 4px;
+  padding-right: 4px;
+  text-align: center;
+  white-space: normal;
+}
+
+/* Pager row below the results table: unique toggle left, rows selector +
+   range + Prev/Next right. */
+.pager-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.pager-row .pager-left {
+  margin-right: auto;
+}
+
+.pager-row select {
+  padding: 7px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.pager-row .btn {
+  padding: 7px 12px;
 }
 
 /* --- Last scan summary --- */

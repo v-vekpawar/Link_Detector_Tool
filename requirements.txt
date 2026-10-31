@@ -8,17 +8,7 @@
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 pydantic==2.9.2
-python-multipart==0.0.9i have encountering  some issues with the tool https://github.com/v-vekpawar/Link_Detector_Tool/tree/new_version
-1. if go with option static, tool does not work.
-2. i have to completely exclude a domain .xyz.abc from result.
-3. an inactive link ends with #, so our tool completely skip it and flagged it as inactive. but sometime those links are linked to other pages. so i want it to scan those pages too.
-
-so tell me about it.i have encountering  some issues with the tool https://github.com/v-vekpawar/Link_Detector_Tool/tree/new_version
-1. if go with option static, tool does not work.
-2. i have to completely exclude a domain .xyz.abc from result.
-3. an inactive link ends with #, so our tool completely skip it and flagged it as inactive. but sometime those links are linked to other pages. so i want it to scan those pages too.
-
-so tell me about it.
+python-multipart==0.0.9
 
 # --- Tier 1: static crawl / parse ---
 requests==2.32.3
@@ -38,6 +28,7 @@ playwright==1.47.0
 # --- Export ---
 openpyxl==3.1.5
 reportlab==4.2.5
+pillow==11.3.0
 pypdf==6.18.1
 
 # Dev/test-only dependencies — NOT needed on the offline VM, only for

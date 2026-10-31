@@ -39,13 +39,15 @@ def start_progress(scan_id: int) -> None:
     """Registers a new running scan. Call this right before starting its background thread."""
     with _lock:
         _progress[scan_id] = {
-            "status": "running",  # "running" | "completed" | "failed"
+            "status": "running",  # "running" | "completed" | "failed" | "stopped"
             "pages_crawled": 0,
             "links_checked": 0,
             "elapsed_seconds": 0.0,
             "estimated_remaining_seconds": None,  # None while still in the warm-up window
             "error": None,
+            "screenshots": None,  # None | capturing | ready | partial | stopped | failed | none
             "_start_time": time.monotonic(),
+            "_stop_event": threading.Event(),
         }
 
 
@@ -73,7 +75,7 @@ def update_progress(scan_id: int, *, pages_crawled: int, links_checked: int, fro
 
 
 def finish_progress(scan_id: int, status: str, error: Optional[str] = None) -> None:
-    """status: 'completed' or 'failed'. Marks the final state for the SSE stream's closing event."""
+    """status: 'completed', 'failed', or 'stopped'. Marks the final state for the SSE stream's closing event."""
     with _lock:
         entry = _progress.get(scan_id)
         if entry is None:
@@ -85,6 +87,18 @@ def finish_progress(scan_id: int, status: str, error: Optional[str] = None) -> N
             entry["estimated_remaining_seconds"] = 0
 
 
+def set_screenshots_state(scan_id: int, state: Optional[str]) -> None:
+    """Tracks the proof-screenshots phase (screenshots feature) on a running
+    scan's progress entry: None (no phase) | capturing | ready | partial |
+    stopped | failed | none (nothing shootable). Flows into the SSE snapshot
+    so the UI can render results mid-stream and fill the gallery later."""
+    with _lock:
+        entry = _progress.get(scan_id)
+        if entry is None:
+            return
+        entry["screenshots"] = state
+
+
 def get_progress(scan_id: int) -> Optional[Dict[str, Any]]:
     """Returns a snapshot dict (internal bookkeeping keys stripped), or None if not tracked."""
     with _lock:
@@ -93,7 +107,33 @@ def get_progress(scan_id: int) -> Optional[Dict[str, Any]]:
             return None
         snapshot = dict(entry)
     snapshot.pop("_start_time", None)
+    snapshot.pop("_stop_event", None)
     return snapshot
+
+
+def request_stop(scan_id: int) -> bool:
+    """
+    Signals a running scan to stop cooperatively — the worker notices
+    between crawled pages, runs normal teardown (logout for dynamic+login),
+    keeps partial results, and finishes as 'stopped'. Idempotent: safe to
+    call even if the scan already finished stopping. Returns True if the
+    scan is still tracked (request registered), False if unknown/dropped.
+    """
+    with _lock:
+        entry = _progress.get(scan_id)
+        if entry is None:
+            return False
+        entry["_stop_event"].set()
+        return True
+
+
+def get_stop_event(scan_id: int) -> Optional[threading.Event]:
+    """Returns the cooperative-stop event for a tracked scan, or None if not tracked."""
+    with _lock:
+        entry = _progress.get(scan_id)
+        if entry is None:
+            return None
+        return entry["_stop_event"]
 
 
 def drop_progress(scan_id: int) -> None:

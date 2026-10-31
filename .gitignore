@@ -12,6 +12,7 @@ venv/
 .venv/
 env/
 ENV/
+venv1/
 
 # --- SQLite database (real runtime data, not something to commit) ---
 backend/link_audit.db
@@ -62,3 +63,6 @@ bundle_windows/
 temp_dl_env/
 temp_pw_env/
 temp_pw_win/
+
+
+test-site/

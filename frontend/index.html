@@ -4,13 +4,34 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Link &amp; Navigation Audit</title>
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=3">
 </head>
 <body>
 
 <header class="page-header">
   <h1>Link &amp; Navigation Audit</h1>
   <p class="page-subtitle">Checks one target for broken, inactive, IP-based, and internet-facing links.</p>
+  <button type="button" id="settings-gear" class="settings-gear" aria-label="Scan settings" title="Scan settings">⚙</button>
+  <div id="settings-pop" class="settings-pop" hidden>
+    <h2>Scan settings</h2>
+    <p class="field-hint">Per-scan overrides — empty means the default shown. Set checks the values now; refresh resets everything.</p>
+    <div class="settings-grid">
+      <label>Max pages<input type="number" id="opt-max-pages" min="1" inputmode="numeric"><p class="field-hint settings-field-error" id="err-opt-max-pages" hidden></p></label>
+      <label>Max depth<input type="number" id="opt-max-depth" min="1" inputmode="numeric"><p class="field-hint settings-field-error" id="err-opt-max-depth" hidden></p></label>
+      <label>Timeout (s)<input type="number" id="opt-timeout" min="1" inputmode="decimal"><p class="field-hint settings-field-error" id="err-opt-timeout" hidden></p></label>
+      <label>Delay (s)<input type="number" id="opt-delay" min="0" step="0.1" inputmode="decimal"><p class="field-hint settings-field-error" id="err-opt-delay" hidden></p></label>
+    </div>
+    <label class="checkbox-option"><input type="checkbox" id="opt-headless"> <span>Headless browser (dynamic scans only)</span></label>
+    <label for="opt-excluded">Excluded domains (one per line — subdomains included)</label>
+    <textarea id="opt-excluded" rows="3" class="mono" placeholder="example.com"></textarea>
+    <p class="field-hint settings-field-error" id="err-opt-excluded" hidden></p>
+    <p id="settings-pop-hint" class="field-hint"></p>
+    <p id="settings-pop-error" class="field-hint settings-error" hidden></p>
+    <div class="settings-actions">
+      <button type="button" id="settings-reset-btn" class="btn btn-secondary">Reset</button>
+      <button type="button" id="settings-set-btn" class="btn btn-primary">Set</button>
+    </div>
+  </div>
 </header>
 
 <main class="container">
@@ -25,7 +46,10 @@
       <div><dt>Pages crawled</dt><dd id="last-scan-pages"></dd></div>
       <div><dt>Links checked</dt><dd id="last-scan-links"></dd></div>
     </dl>
+    <p class="field-hint">Links</p>
     <ul id="last-scan-counts" class="badge-row"></ul>
+    <p class="field-hint">Code scan findings</p>
+    <ul id="last-scan-comment-counts" class="badge-row"></ul>
     <button type="button" id="view-last-results-btn" class="btn btn-secondary">View Last Results</button>
   </section>
 
@@ -53,7 +77,15 @@
       <p class="field-hint">Dynamic renders JavaScript-injected links and enables login support.</p>
     </fieldset>
 
-    <div class="field">
+    <div class="field" id="only-on-ui-field" hidden>
+      <label class="checkbox-option">
+        <input type="checkbox" id="only-on-ui">
+        <span>Only on UI</span>
+      </label>
+      <p class="field-hint">Dynamic only — broken links are reported only when a visible link on the page points at them, and every visible broken and inactive link gets a proof screenshot.</p>
+    </div>
+
+    <div class="field" id="login-checkbox-field" hidden>
       <label class="checkbox-option">
         <input type="checkbox" id="requires-login">
         <span>This site requires login</span>
@@ -63,14 +95,25 @@
     <div id="login-fields" class="login-fields" hidden>
 
       <div id="login-recorded-fields">
-        <p id="recorded-flow-status" class="field-hint">Enter a target URL above to check for a recorded flow.</p>
-        <button type="button" id="record-flow-btn" class="btn btn-secondary">Record login flow</button>
-        <div id="record-flow-panel" class="record-flow-panel" hidden>
-          <p id="record-flow-message"></p>
-          <button type="button" id="record-flow-done-btn" class="btn btn-secondary">I've finished — save recording</button>
+        <p id="flow-status" class="field-hint">Enter a target URL above to check for a recorded flow.</p>
+        <div class="flow-btn-row">
+          <button type="button" id="flow-login-btn" class="btn btn-secondary">Start Login Record</button>
+          <button type="button" id="flow-logout-btn" class="btn btn-secondary" disabled>Start Logout Record</button>
+          <button type="button" id="flow-save-btn" class="btn btn-secondary" disabled>Save Record</button>
+        </div>
+        <p id="flow-message" class="field-hint"></p>
+
+        <div class="field">
+          <label for="flow-logout-url">Logout URL (optional — flow Save checks it in the open window; URL wins over a recorded logout)</label>
+          <div class="field-row-inline">
+            <input type="text" id="flow-logout-url" class="mono" placeholder="https://…/logout" autocomplete="off">
+            <button type="button" id="flow-url-save-btn" class="btn btn-secondary">Save</button>
+          </div>
+          <p id="flow-url-status" class="field-hint"></p>
         </div>
       </div>
 
+      <p class="field-hint">Credentials are used for this scan only and are never stored.</p>
       <div class="field-row">
         <div class="field">
           <label for="login-username">Username</label>
@@ -81,7 +124,12 @@
           <input type="password" id="login-password" name="password" autocomplete="off">
         </div>
       </div>
-      <p class="field-hint">Credentials are used for this scan only and are never stored.</p>
+      <div class="field">
+        <label for="flow-captcha">Captcha answer (if the login form has one)</label>
+        <input type="text" id="flow-captcha" name="captcha_answer" autocomplete="off">
+        <p class="field-hint">Only needed if the target's login page shows a fixed captcha field. Leave blank if there isn't one.</p>
+      </div>
+      <div id="login-extra-fields" class="login-extra-fields"></div>
 
     </div>
 
@@ -94,20 +142,40 @@
   <section id="progress-section" class="progress-section" hidden>
     <h2 class="section-label">Scanning</h2>
     <p id="progress-line" class="progress-line mono" aria-live="polite"></p>
+    <div class="stop-row">
+      <button type="button" id="stop-scan-btn" class="btn btn-secondary" hidden>Stop scan</button>
+    </div>
   </section>
 
-  <section id="results-section" class="results-section" hidden>
+</main>
+
+<section id="results-section" class="results-section results-section-full" hidden>
     <h2 class="section-label">Results</h2>
 
-    <ul id="result-tabs" class="tab-row">
-      <li><button type="button" class="tab-badge" id="tab-links" data-tab="links">Links (<span id="tab-links-count">0</span>)</button></li>
-      <li><button type="button" class="tab-badge" id="tab-commented" data-tab="commented">Code Findings (<span id="tab-commented-count">0</span>)</button></li>
-    </ul>
+    <div class="results-head-row">
+      <ul id="result-tabs" class="tab-row">
+        <li><button type="button" class="tab-badge" id="tab-links" data-tab="links">Links (<span id="tab-links-count">0</span>)</button></li>
+        <li><button type="button" class="tab-badge" id="tab-commented" data-tab="commented">Code Findings (<span id="tab-commented-count">0</span>)</button></li>
+        <li><button type="button" class="tab-badge" id="tab-shots" data-tab="screenshots">Screenshots (<span id="tab-shots-count">0</span>)</button></li>
+      </ul>
+
+      <div class="export-row">
+        <label class="checkbox-option" title="Export both tabs instead of just the active one">
+          <input type="checkbox" id="export-both"> <span>Both tabs</span>
+        </label>
+        <button type="button" id="export-xlsx-btn" class="btn btn-secondary">Export Excel</button>
+        <button type="button" id="export-pdf-btn" class="btn btn-secondary">Export PDF</button>
+        <button type="button" id="export-docx-btn" class="btn btn-secondary">Export Word</button>
+        <button type="button" id="screenshots-zip-btn" class="btn btn-secondary" disabled hidden>Download screenshots (ZIP)</button>
+        <span id="export-status" class="field-hint"></span>
+      </div>
+    </div>
 
     <div id="category-filters" class="badge-row"></div>
+    <div id="broken-drilldown" class="badge-row drilldown-row" hidden></div>
     <p id="results-meta" class="field-hint"></p>
 
-    <div class="table-scroll">
+    <div class="table-scroll" id="table-scroll">
       <table id="results-table">
         <thead>
           <tr>
@@ -115,7 +183,6 @@
             <th>Link</th>
             <th>Category</th>
             <th>Severity</th>
-            <th>Code snippet</th>
             <th>Evidence / reason</th>
             <th>Element location</th>
           </tr>
@@ -123,17 +190,30 @@
         <tbody id="results-tbody"></tbody>
       </table>
     </div>
+    <div id="pager-row" class="pager-row">
+      <button type="button" id="unique-toggle" class="btn btn-secondary pager-left" aria-pressed="false">Unique: off</button>
+      <label for="rows-per-page">Rows</label>
+      <select id="rows-per-page">
+        <option value="10">10</option>
+        <option value="25" selected>25</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+        <option value="all">All</option>
+      </select>
+      <span id="pager-info" class="field-hint"></span>
+      <button type="button" id="pager-prev" class="btn btn-secondary">‹ Prev</button>
+      <button type="button" id="pager-next" class="btn btn-secondary">Next ›</button>
+    </div>
     <p id="results-empty" class="field-hint" hidden>No issues found — every link checked out clean.</p>
 
-    <div class="export-row">
-      <button type="button" id="export-xlsx-btn" class="btn btn-secondary">Export Excel</button>
-      <button type="button" id="export-pdf-btn" class="btn btn-secondary">Export PDF</button>
-      <span id="export-status" class="field-hint"></span>
-    </div>
+    <section id="screenshots-section" hidden>
+      <h2 class="section-label">Proof screenshots</h2>
+      <p id="screenshots-note" class="field-hint"></p>
+      <div id="screenshots-gallery"></div>
+      <p><span id="screenshots-status" class="field-hint"></span></p>
+    </section>
   </section>
 
-</main>
-
-<script src="app.js"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>
